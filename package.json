@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obcard",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Obsidian plugin for generating and reviewing BASIC flashcards",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

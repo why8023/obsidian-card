@@ -1,8 +1,99 @@
-/*
+.obcard-review-modal {
+	width: min(960px, 92vw);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.obcard-review-content {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
 
-If your plugin does not need CSS, delete this file.
+.obcard-review-file-path,
+.obcard-review-summary {
+	margin: 0;
+	color: var(--text-muted);
+}
 
-*/
+.obcard-review-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.obcard-review-actions--footer {
+	justify-content: flex-end;
+	padding-top: 4px;
+}
+
+.obcard-review-list {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	max-height: 60vh;
+	overflow: auto;
+	padding-right: 4px;
+}
+
+.obcard-review-card {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 12px;
+	padding: 16px;
+	background: var(--background-secondary);
+}
+
+.obcard-review-card-header {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.obcard-review-card-heading {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+}
+
+.obcard-review-chip {
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.obcard-review-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-bottom: 12px;
+}
+
+.obcard-review-field-label {
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.obcard-review-textarea,
+.obcard-review-input {
+	width: 100%;
+}
+
+.obcard-review-source {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.obcard-review-source-preview {
+	margin: 0;
+	padding: 12px;
+	border-radius: 8px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 13px;
+	line-height: 1.5;
+}
