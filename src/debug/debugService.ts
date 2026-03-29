@@ -262,15 +262,16 @@ class ActiveDebugRun implements DebugRun {
 	}
 
 	recordReview(reviewResult: ReviewResult): void {
+		const approvedCards = flattenApprovedCards(reviewResult);
 		this.artifact.review = {
 			action: reviewResult.action,
-			approvedCount: reviewResult.approvedCards.length,
-			approvedCards: cloneCards(reviewResult.approvedCards),
+			approvedCount: approvedCards.length,
+			approvedCards,
 		};
 
 		this.log("review", `Review finished with action ${reviewResult.action}.`, {
 			action: reviewResult.action,
-			approvedCount: reviewResult.approvedCards.length,
+			approvedCount: approvedCards.length,
 		});
 	}
 
@@ -423,6 +424,10 @@ function cloneCards(cards: GeneratedBasicCard[]): GeneratedBasicCard[] {
 		back: card.back,
 		tags: [...card.tags],
 	}));
+}
+
+function flattenApprovedCards(reviewResult: ReviewResult): GeneratedBasicCard[] {
+	return cloneCards(reviewResult.approvedGroups.flatMap((group) => group.cards));
 }
 
 function sanitizeHeaders(headers: Record<string, string>): Record<string, string> {

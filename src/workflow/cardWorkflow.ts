@@ -4,13 +4,13 @@ import type { Editor, MarkdownFileInfo } from "obsidian";
 
 import type ObsidianCardPlugin from "../main";
 import { AiCardGenerator } from "../generation/cardGenerator";
-import { buildCardCandidates } from "../generation/cardValidator";
+import { buildReviewGroups } from "../generation/cardValidator";
 import { buildFileChunks, buildSelectionChunks } from "../generation/contentChunkBuilder";
-import { listMarkdownFiles, resolveCurrentFileTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
+import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
-import type { ChunkGenerationResult, ContentChunk, GenerationMode, ReviewAction } from "../types";
+import type { ApprovedCardGroup, ChunkGenerationResult, ContentChunk, GenerationMode, ReviewAction, ReviewResult } from "../types";
 import { ReviewModal } from "../ui/reviewModal";
-import { appendCardsToFlashcardsSection } from "../writing/flashcardWriter";
+import { writeApprovedCardGroups } from "../writing/flashcardWriter";
 
 interface FileProcessResult {
 	action: ReviewAction;
@@ -47,6 +47,21 @@ export class FlashcardWorkflow {
 
 			const content = await this.loadFileContent(target.file);
 			const chunks = buildFileChunks(target.file, content);
+			await this.processSingleFile(target.file, chunks, false, target.mode);
+		});
+	}
+
+	async generateUpToCursor(editor: Editor, ctx: MarkdownFileInfo): Promise<void> {
+		await this.runSafely(async () => {
+			const target = resolveCursorTarget(editor, ctx);
+			if (target === null || target.cursorOffset === undefined) {
+				new Notice("Open a Markdown file before generating flashcards.");
+				return;
+			}
+
+			const chunks = buildFileChunks(target.file, editor.getValue(), {
+				upToOffset: target.cursorOffset,
+			});
 			await this.processSingleFile(target.file, chunks, false, target.mode);
 		});
 	}
@@ -135,7 +150,10 @@ export class FlashcardWorkflow {
 			this.assertAiConfigured();
 
 			if (chunks.length === 0) {
-				new Notice(`No usable content found in ${file.basename}.`);
+				const message = mode === "selection"
+					? `No usable content found in ${file.basename}.`
+					: `No uncovered content found in ${file.basename}.`;
+				new Notice(message);
 				const result = {
 					action: isBatchMode ? "skip-file" : "cancel",
 					insertedCount: 0,
@@ -145,10 +163,10 @@ export class FlashcardWorkflow {
 			}
 
 			const chunkResults = await this.generateChunkResults(chunks, debugRun);
-			const candidates = buildCardCandidates(chunkResults);
-			debugRun.recordCandidates(candidates);
+			const reviewGroups = buildReviewGroups(chunkResults);
+			debugRun.recordCandidates(reviewGroups.flatMap((group) => group.candidates));
 
-			if (candidates.length === 0) {
+			if (reviewGroups.length === 0) {
 				new Notice(`No valid flashcard candidates were generated for ${file.basename}.`);
 				const result = {
 					action: isBatchMode ? "skip-file" : "cancel",
@@ -160,7 +178,7 @@ export class FlashcardWorkflow {
 
 			const reviewResult = await new ReviewModal(this.plugin.app, {
 				filePath: file.path,
-				candidates,
+				groups: reviewGroups,
 				isBatchMode,
 			}).openAndWait();
 			debugRun.recordReview(reviewResult);
@@ -174,7 +192,10 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			if (reviewResult.approvedCards.length === 0) {
+			const groupsToWrite = this.buildGroupsToWrite(chunkResults, reviewResult, mode);
+			const approvedCardCount = groupsToWrite.reduce((sum, group) => sum + group.cards.length, 0);
+
+			if (approvedCardCount === 0 && mode === "selection") {
 				new Notice(`No flashcards were kept for ${file.basename}.`);
 				const result = {
 					action: "confirm",
@@ -184,11 +205,16 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const insertedCount = await appendCardsToFlashcardsSection(this.plugin.app.vault, file, reviewResult.approvedCards);
-			new Notice(`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"} into ${file.basename}.`);
+			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite);
+			const updatedSectionCount = groupsToWrite.length;
+			const noticeParts = [
+				`Updated ${updatedSectionCount} section${updatedSectionCount === 1 ? "" : "s"} in ${file.basename}.`,
+				`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"}.`,
+			];
+			new Notice(noticeParts.join(" "));
 			debugRun.recordWrite({
 				insertedCount,
-				approvedCount: reviewResult.approvedCards.length,
+				approvedCount: approvedCardCount,
 			});
 
 			const result = {
@@ -244,6 +270,21 @@ export class FlashcardWorkflow {
 		}
 
 		return results;
+	}
+
+	private buildGroupsToWrite(chunkResults: ChunkGenerationResult[], reviewResult: ReviewResult, mode: GenerationMode): ApprovedCardGroup[] {
+		if (mode === "selection") {
+			return reviewResult.approvedGroups.filter((group) => group.cards.length > 0);
+		}
+
+		const approvedGroupsBySection = new Map(
+			reviewResult.approvedGroups.map((group) => [group.chunk.sectionKey, group.cards] as const),
+		);
+
+		return chunkResults.map((result) => ({
+			chunk: result.chunk,
+			cards: [...(approvedGroupsBySection.get(result.chunk.sectionKey) ?? [])],
+		}));
 	}
 
 	private async loadFileContent(file: TFile): Promise<string> {

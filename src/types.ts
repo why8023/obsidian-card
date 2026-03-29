@@ -1,6 +1,8 @@
 import type { TFile } from "obsidian";
 
-export type GenerationMode = "selection" | "file" | "folder-file";
+export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
+export type ContentChunkKind = "selection" | "section";
+export type CardBlockKind = "selection" | "heading" | "preamble";
 
 export interface TextRange {
 	from: number;
@@ -12,6 +14,7 @@ export interface GenerationTarget {
 	filePath: string;
 	mode: GenerationMode;
 	selectedRange?: TextRange;
+	cursorOffset?: number;
 }
 
 export interface ContentChunk {
@@ -19,6 +22,13 @@ export interface ContentChunk {
 	filePath: string;
 	text: string;
 	range: TextRange;
+	kind: ContentChunkKind;
+	blockKind: CardBlockKind;
+	sectionKey: string;
+	sourceHash: string;
+	headingPath: string[];
+	insertOffset: number;
+	bodyRange: TextRange;
 	titleHint?: string;
 }
 
@@ -35,17 +45,40 @@ export interface ChunkGenerationResult {
 
 export interface CardCandidate {
 	id: string;
+	chunkId: string;
 	filePath: string;
-	chunkIndex: number;
 	titleHint?: string;
 	sourcePreview: string;
 	card: GeneratedBasicCard;
 	approved: boolean;
 }
 
+export interface ReviewGroup {
+	chunk: ContentChunk;
+	sourcePreview: string;
+	candidates: CardCandidate[];
+}
+
+export interface ApprovedCardGroup {
+	chunk: ContentChunk;
+	cards: GeneratedBasicCard[];
+}
+
 export type ReviewAction = "confirm" | "cancel" | "skip-file" | "stop-batch";
 
 export interface ReviewResult {
 	action: ReviewAction;
-	approvedCards: GeneratedBasicCard[];
+	approvedGroups: ApprovedCardGroup[];
+}
+
+export interface CardBlockMetadata {
+	sectionKey: string;
+	headingPath: string[];
+	sourceHash: string;
+	kind: CardBlockKind;
+}
+
+export interface ExistingCardBlock {
+	metadata: CardBlockMetadata;
+	range: TextRange;
 }

@@ -1,17 +1,22 @@
 import type { TFile, Vault } from "obsidian";
 
-import type { GeneratedBasicCard } from "../types";
-import { collectMarkdownHeadings, detectNewline } from "../utils/markdown";
+import type { ApprovedCardGroup, CardBlockMetadata, GeneratedBasicCard } from "../types";
+import { collectObsidianCardBlocks, detectNewline } from "../utils/markdown";
 
-const FLASHCARDS_HEADING = "## Flashcards";
+const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
 
-export async function appendCardsToFlashcardsSection(vault: Vault, file: TFile, cards: GeneratedBasicCard[]): Promise<number> {
-	if (cards.length === 0) {
+export async function writeApprovedCardGroups(vault: Vault, file: TFile, groups: ApprovedCardGroup[]): Promise<number> {
+	if (groups.length === 0) {
 		return 0;
 	}
 
-	await vault.process(file, (content) => insertCards(content, cards));
-	return cards.length;
+	let insertedCount = 0;
+	await vault.process(file, (content) => {
+		const result = upsertCardGroups(content, groups);
+		insertedCount = result.insertedCount;
+		return result.content;
+	});
+	return insertedCount;
 }
 
 export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): string {
@@ -27,52 +32,108 @@ export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): strin
 	].join(newline);
 }
 
-function insertCards(content: string, cards: GeneratedBasicCard[]): string {
+function upsertCardGroups(content: string, groups: ApprovedCardGroup[]): { content: string; insertedCount: number } {
 	const newline = detectNewline(content);
-	const renderedBlock = cards.map((card) => renderBasicCard(card, newline)).join(`${newline}${newline}`);
-	const flashcardsSection = findFlashcardsSection(content);
+	const sortedGroups = [...groups].sort((left, right) => (
+		right.chunk.insertOffset - left.chunk.insertOffset || right.chunk.range.from - left.chunk.range.from
+	));
 
-	if (flashcardsSection === null) {
-		return appendNewFlashcardsSection(content, renderedBlock, newline);
-	}
+	let workingContent = content;
+	let insertedCount = 0;
 
-	const beforeSectionEnd = content.slice(0, flashcardsSection.end).replace(/\s*$/, "");
-	const afterSectionEnd = content.slice(flashcardsSection.end).replace(/^\s*/, "");
+	for (const group of sortedGroups) {
+		const block = renderCardBlock({
+			sectionKey: group.chunk.sectionKey,
+			headingPath: group.chunk.headingPath,
+			sourceHash: group.chunk.sourceHash,
+			kind: group.chunk.blockKind,
+		}, group.cards, newline);
 
-	if (afterSectionEnd.length === 0) {
-		return `${beforeSectionEnd}${newline}${newline}${renderedBlock}${newline}`;
-	}
+		insertedCount += group.cards.length;
 
-	return `${beforeSectionEnd}${newline}${newline}${renderedBlock}${newline}${newline}${afterSectionEnd}`;
-}
-
-function appendNewFlashcardsSection(content: string, renderedBlock: string, newline: string): string {
-	const trimmedContent = content.replace(/\s*$/, "");
-	if (trimmedContent.length === 0) {
-		return `${FLASHCARDS_HEADING}${newline}${newline}${renderedBlock}${newline}`;
-	}
-
-	return `${trimmedContent}${newline}${newline}${FLASHCARDS_HEADING}${newline}${newline}${renderedBlock}${newline}`;
-}
-
-function findFlashcardsSection(content: string): { end: number } | null {
-	const headings = collectMarkdownHeadings(content);
-	const flashcardsHeadingIndex = headings.findIndex((heading) => heading.level === 2 && heading.title.trim().toLowerCase() === "flashcards");
-
-	if (flashcardsHeadingIndex === -1) {
-		return null;
-	}
-
-	let end = content.length;
-
-	for (const heading of headings.slice(flashcardsHeadingIndex + 1)) {
-		if (heading.level <= 2) {
-			end = heading.from;
-			break;
+		if (group.chunk.kind === "selection") {
+			workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, block, newline);
+			continue;
 		}
+
+		const existingBlock = collectObsidianCardBlocks(workingContent)
+			.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
+
+		if (existingBlock) {
+			workingContent = `${workingContent.slice(0, existingBlock.range.from)}${block}${workingContent.slice(existingBlock.range.to)}`;
+			continue;
+		}
+
+		workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, block, newline);
 	}
 
-	return { end };
+	return {
+		content: workingContent,
+		insertedCount,
+	};
+}
+
+function renderCardBlock(metadata: CardBlockMetadata, cards: GeneratedBasicCard[], newline: string): string {
+	const serializedMetadata = JSON.stringify({
+		sectionKey: metadata.sectionKey,
+		headingPath: metadata.headingPath,
+		sourceHash: metadata.sourceHash,
+		kind: metadata.kind,
+	});
+	const parts = [`<!-- obcard-section:start ${serializedMetadata} -->`];
+
+	for (const [index, card] of cards.entries()) {
+		if (index > 0) {
+			parts.push("");
+		}
+
+		parts.push(renderBasicCard(card, newline));
+	}
+
+	parts.push(OBCARD_SECTION_END_MARKER);
+	return parts.join(newline);
+}
+
+function insertBlockAt(content: string, offset: number, block: string, newline: string): string {
+	const safeOffset = Math.max(0, Math.min(offset, content.length));
+	const before = content.slice(0, safeOffset);
+	const after = content.slice(safeOffset);
+	const prefix = buildInsertPrefix(before, newline);
+	const suffix = buildInsertSuffix(after, newline);
+
+	return `${before}${prefix}${block}${suffix}${after}`;
+}
+
+function buildInsertPrefix(before: string, newline: string): string {
+	if (before.length === 0) {
+		return "";
+	}
+
+	if (before.endsWith(`${newline}${newline}`)) {
+		return "";
+	}
+
+	if (before.endsWith(newline)) {
+		return newline;
+	}
+
+	return `${newline}${newline}`;
+}
+
+function buildInsertSuffix(after: string, newline: string): string {
+	if (after.length === 0) {
+		return newline;
+	}
+
+	if (after.startsWith(`${newline}${newline}`)) {
+		return "";
+	}
+
+	if (after.startsWith(newline)) {
+		return newline;
+	}
+
+	return `${newline}${newline}`;
 }
 
 function sanitizeTags(tags: string[]): string[] {

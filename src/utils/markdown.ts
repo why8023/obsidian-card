@@ -11,6 +11,9 @@ interface LineInfo {
 	end: number;
 }
 
+const OBCARD_SECTION_START_PREFIX = "<!-- obcard-section:start";
+const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
+
 export function detectNewline(content: string): string {
 	return content.includes("\r\n") ? "\r\n" : "\n";
 }
@@ -117,6 +120,166 @@ export function makePreview(value: string, maxLength = 240): string {
 	}
 
 	return `${normalizedValue.slice(0, Math.max(maxLength - 3, 0)).trim()}...`;
+}
+
+export function sliceWithoutRanges(content: string, from: number, to: number, excludedRanges: Array<{ from: number; to: number }>): string {
+	if (from >= to) {
+		return "";
+	}
+
+	const overlappingRanges = excludedRanges
+		.filter((range) => range.to > from && range.from < to)
+		.sort((left, right) => left.from - right.from);
+
+	if (overlappingRanges.length === 0) {
+		return content.slice(from, to);
+	}
+
+	let cursor = from;
+	let result = "";
+
+	for (const range of overlappingRanges) {
+		const rangeStart = Math.max(range.from, from);
+		const rangeEnd = Math.min(range.to, to);
+
+		if (rangeStart > cursor) {
+			result += content.slice(cursor, rangeStart);
+		}
+
+		cursor = Math.max(cursor, rangeEnd);
+		if (cursor >= to) {
+			break;
+		}
+	}
+
+	if (cursor < to) {
+		result += content.slice(cursor, to);
+	}
+
+	return result;
+}
+
+export function slugifyHeading(value: string): string {
+	const normalizedValue = value
+		.trim()
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, "-")
+		.replace(/^-+|-+$/g, "");
+
+	if (normalizedValue.length > 0) {
+		return normalizedValue;
+	}
+
+	return `section-${hashContent(value).slice(-8)}`;
+}
+
+export function hashContent(value: string): string {
+	let hash = 0x811c9dc5;
+
+	for (let index = 0; index < value.length; index += 1) {
+		hash ^= value.charCodeAt(index);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+
+	return `fnv1a:${hash.toString(16).padStart(8, "0")}`;
+}
+
+export function collectObsidianCardBlocks(content: string): Array<{
+	metadata: {
+		sectionKey: string;
+		headingPath: string[];
+		sourceHash: string;
+		kind: "selection" | "heading" | "preamble";
+	};
+	range: {
+		from: number;
+		to: number;
+	};
+}> {
+	const blocks: Array<{
+		metadata: {
+			sectionKey: string;
+			headingPath: string[];
+			sourceHash: string;
+			kind: "selection" | "heading" | "preamble";
+		};
+		range: {
+			from: number;
+			to: number;
+		};
+	}> = [];
+
+	let searchOffset = 0;
+
+	while (searchOffset < content.length) {
+		const startIndex = content.indexOf(OBCARD_SECTION_START_PREFIX, searchOffset);
+		if (startIndex === -1) {
+			break;
+		}
+
+		const startCommentEnd = content.indexOf("-->", startIndex);
+		if (startCommentEnd === -1) {
+			break;
+		}
+
+		const startComment = content.slice(startIndex, startCommentEnd + 3);
+		const metadata = parseCardBlockMetadata(startComment);
+		if (metadata === null) {
+			searchOffset = startCommentEnd + 3;
+			continue;
+		}
+
+		const endIndex = content.indexOf(OBCARD_SECTION_END_MARKER, startCommentEnd + 3);
+		if (endIndex === -1) {
+			break;
+		}
+
+		blocks.push({
+			metadata,
+			range: {
+				from: startIndex,
+				to: endIndex + OBCARD_SECTION_END_MARKER.length,
+			},
+		});
+
+		searchOffset = endIndex + OBCARD_SECTION_END_MARKER.length;
+	}
+
+	return blocks;
+}
+
+function parseCardBlockMetadata(comment: string): {
+	sectionKey: string;
+	headingPath: string[];
+	sourceHash: string;
+	kind: "selection" | "heading" | "preamble";
+} | null {
+	const match = comment.match(/^<!--\s*obcard-section:start\s+([\s\S]+?)\s*-->$/);
+	const rawPayload = match?.[1];
+	if (!rawPayload) {
+		return null;
+	}
+
+	try {
+		const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
+		const sectionKey = typeof parsed.sectionKey === "string" ? parsed.sectionKey : "";
+		const sourceHash = typeof parsed.sourceHash === "string" ? parsed.sourceHash : "";
+		const kind = parsed.kind;
+		if (sectionKey.length === 0 || sourceHash.length === 0 || (kind !== "selection" && kind !== "heading" && kind !== "preamble")) {
+			return null;
+		}
+
+		return {
+			sectionKey,
+			headingPath: Array.isArray(parsed.headingPath)
+				? parsed.headingPath.filter((entry): entry is string => typeof entry === "string")
+				: [],
+			sourceHash,
+			kind,
+		};
+	} catch {
+		return null;
+	}
 }
 
 function getLineInfos(content: string): LineInfo[] {

@@ -34,6 +34,20 @@ export function resolveSelectionTarget(editor: Editor, ctx: MarkdownFileInfo): G
 	};
 }
 
+export function resolveCursorTarget(editor: Editor, ctx: MarkdownFileInfo): GenerationTarget | null {
+	const file = ctx.file;
+	if (!isMarkdownFile(file)) {
+		return null;
+	}
+
+	return {
+		file,
+		filePath: file.path,
+		mode: "cursor-file",
+		cursorOffset: editor.posToOffset(editor.getCursor()),
+	};
+}
+
 export function resolveCurrentFileTarget(app: App): GenerationTarget | null {
 	const file = app.workspace.getActiveFile();
 	if (!isMarkdownFile(file)) {

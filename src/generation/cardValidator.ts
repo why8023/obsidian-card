@@ -1,12 +1,13 @@
-import type { CardCandidate, ChunkGenerationResult, GeneratedBasicCard } from "../types";
+import type { CardCandidate, ChunkGenerationResult, GeneratedBasicCard, ReviewGroup } from "../types";
 import { collapseWhitespace, makePreview } from "../utils/markdown";
 
-export function buildCardCandidates(results: ChunkGenerationResult[]): CardCandidate[] {
-	const candidates: CardCandidate[] = [];
+export function buildReviewGroups(results: ChunkGenerationResult[]): ReviewGroup[] {
+	const groups: ReviewGroup[] = [];
 	const seenKeys = new Set<string>();
 
-	let chunkIndex = 0;
 	for (const result of results) {
+		const candidates: CardCandidate[] = [];
+
 		for (const rawCard of result.cards) {
 			const normalizedCard = normalizeCard(rawCard);
 			if (normalizedCard === null) {
@@ -20,9 +21,9 @@ export function buildCardCandidates(results: ChunkGenerationResult[]): CardCandi
 			seenKeys.add(dedupeKey);
 
 			candidates.push({
-				id: `${chunkIndex}-${candidates.length}`,
+				id: `${result.chunk.sectionKey}-${candidates.length}`,
+				chunkId: result.chunk.sectionKey,
 				filePath: result.chunk.filePath,
-				chunkIndex,
 				titleHint: result.chunk.titleHint,
 				sourcePreview: makePreview(result.chunk.text),
 				card: normalizedCard,
@@ -30,10 +31,18 @@ export function buildCardCandidates(results: ChunkGenerationResult[]): CardCandi
 			});
 		}
 
-		chunkIndex += 1;
+		if (candidates.length === 0) {
+			continue;
+		}
+
+		groups.push({
+			chunk: result.chunk,
+			sourcePreview: makePreview(result.chunk.text),
+			candidates,
+		});
 	}
 
-	return candidates;
+	return groups;
 }
 
 function normalizeCard(card: GeneratedBasicCard): GeneratedBasicCard | null {

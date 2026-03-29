@@ -39,7 +39,10 @@ export class AiCardGenerator {
 					role: "user",
 					content: JSON.stringify({
 						filePath: chunk.filePath,
+						sectionKey: chunk.sectionKey,
+						blockKind: chunk.blockKind,
 						titleHint: chunk.titleHint ?? "",
+						headingPath: chunk.headingPath,
 						text: chunk.text,
 					}),
 				},
@@ -84,9 +87,11 @@ export class AiCardGenerator {
 
 function buildSystemPrompt(maxCardsPerChunk: number): string {
 	return [
-		"You generate concise BASIC flashcards from markdown note chunks.",
+		"You generate concise BASIC flashcards from markdown note sections.",
 		`Return only a JSON array with at most ${maxCardsPerChunk} items.`,
 		"Each item must be an object with exactly these keys: front, back, tags.",
+		"Generate cards only for meaningful, memorizable knowledge from the section body.",
+		"Choose the card count based on content density. Returning [] is correct when the section is not worth turning into flashcards.",
 		"front must be a clear question.",
 		"back must be a short answer suitable for memorization.",
 		"tags must be an array of short strings and may be empty.",
