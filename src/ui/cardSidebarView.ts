@@ -35,6 +35,7 @@ export class CardSidebarView extends ItemView {
 	private filterScope: SidebarScope = "all";
 	private actionsInitialized = false;
 	private insertedSelectionMode = false;
+	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
 	private renderedDisplayFilePath: string | null = null;
 
@@ -410,6 +411,10 @@ export class CardSidebarView extends ItemView {
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
 		const detailsEl = sectionEl.createEl("details", { cls: "obcard-sidebar-column-settings" });
+		detailsEl.open = this.isColumnSettingsExpanded;
+		detailsEl.addEventListener("toggle", () => {
+			this.isColumnSettingsExpanded = detailsEl.open;
+		});
 		detailsEl.createEl("summary", {
 			text: "Visible columns",
 		});
