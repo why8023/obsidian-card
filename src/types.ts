@@ -82,3 +82,26 @@ export interface ExistingCardBlock {
 	metadata: CardBlockMetadata;
 	range: TextRange;
 }
+
+export interface ExistingCardEntry {
+	id: string;
+	file: TFile;
+	filePath: string;
+	range: TextRange;
+	blockRange: TextRange;
+	front: string;
+	back: string;
+	tags: string[];
+	metadata: CardBlockMetadata;
+	titleHint: string;
+	indexInSection: number;
+}
+
+export type ReviewSessionStatus = "reviewing" | "submitting";
+
+export interface SidebarReviewSession {
+	file: TFile;
+	filePath: string;
+	groups: ReviewGroup[];
+	status: ReviewSessionStatus;
+}

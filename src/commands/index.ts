@@ -3,6 +3,14 @@ import { resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, res
 
 export function registerCommands(plugin: ObsidianCardPlugin): void {
 	plugin.addCommand({
+		id: "open-flashcard-sidebar",
+		name: "Open flashcard sidebar",
+		callback: () => {
+			void plugin.sidebar.open();
+		},
+	});
+
+	plugin.addCommand({
 		id: "generate-basic-flashcards-from-selection",
 		name: "Generate basic flashcards from selection",
 		editorCheckCallback: (checking, editor, ctx) => {

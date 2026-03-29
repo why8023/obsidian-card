@@ -2,7 +2,8 @@ import { ButtonComponent, Modal, TextAreaComponent, TextComponent } from "obsidi
 
 import type { App } from "obsidian";
 
-import type { ApprovedCardGroup, ReviewGroup, ReviewResult } from "../types";
+import type { ReviewGroup, ReviewResult } from "../types";
+import { cloneReviewGroups, collectApprovedGroups, setAllReviewGroupsApproved, setReviewGroupApproved } from "./reviewState";
 
 interface ReviewModalOptions {
 	filePath: string;
@@ -20,22 +21,7 @@ export class ReviewModal extends Modal {
 	constructor(app: App, options: ReviewModalOptions) {
 		super(app);
 		this.options = options;
-		this.groups = options.groups.map((group) => ({
-			...group,
-			chunk: {
-				...group.chunk,
-				headingPath: [...group.chunk.headingPath],
-				range: { ...group.chunk.range },
-				bodyRange: { ...group.chunk.bodyRange },
-			},
-			candidates: group.candidates.map((candidate) => ({
-				...candidate,
-				card: {
-					...candidate.card,
-					tags: [...candidate.card.tags],
-				},
-			})),
-		}));
+		this.groups = cloneReviewGroups(options.groups);
 	}
 
 	openAndWait(): Promise<ReviewResult> {
@@ -99,7 +85,7 @@ export class ReviewModal extends Modal {
 		this.createActionButton(footerEl, "Confirm insert", () => {
 			this.finish({
 				action: "confirm",
-				approvedGroups: this.collectApprovedGroups(),
+				approvedGroups: collectApprovedGroups(this.groups),
 			});
 		}, { cta: true });
 	}
@@ -227,49 +213,21 @@ export class ReviewModal extends Modal {
 	}
 
 	private setApprovedState(approved: boolean): void {
+		setAllReviewGroupsApproved(this.groups, approved);
+
 		for (const group of this.groups) {
-			this.setGroupApprovedState(group.chunk.sectionKey, approved);
+			for (const checkboxEl of this.groupCheckboxes.get(group.chunk.sectionKey) ?? []) {
+				checkboxEl.checked = approved;
+			}
 		}
 	}
 
 	private setGroupApprovedState(sectionKey: string, approved: boolean): void {
-		const group = this.groups.find((entry) => entry.chunk.sectionKey === sectionKey);
-		if (!group) {
-			return;
-		}
-
-		for (const candidate of group.candidates) {
-			candidate.approved = approved;
-		}
+		setReviewGroupApproved(this.groups, sectionKey, approved);
 
 		for (const checkboxEl of this.groupCheckboxes.get(sectionKey) ?? []) {
 			checkboxEl.checked = approved;
 		}
-	}
-
-	private collectApprovedGroups(): ApprovedCardGroup[] {
-		const results: ApprovedCardGroup[] = [];
-
-		for (const group of this.groups) {
-			const cards = group.candidates
-				.filter((candidate) => candidate.approved)
-				.map((candidate) => ({
-					front: candidate.card.front,
-					back: candidate.card.back,
-					tags: [...candidate.card.tags],
-				}));
-
-			if (cards.length === 0) {
-				continue;
-			}
-
-			results.push({
-				chunk: group.chunk,
-				cards,
-			});
-		}
-
-		return results;
 	}
 
 	private finish(result: ReviewResult): void {

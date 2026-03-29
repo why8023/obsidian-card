@@ -176,11 +176,16 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const reviewResult = await new ReviewModal(this.plugin.app, {
-				filePath: file.path,
-				groups: reviewGroups,
-				isBatchMode,
-			}).openAndWait();
+			const reviewResult = isBatchMode
+				? await new ReviewModal(this.plugin.app, {
+					filePath: file.path,
+					groups: reviewGroups,
+					isBatchMode,
+				}).openAndWait()
+				: await this.plugin.sidebar.openReviewSession({
+					file,
+					groups: reviewGroups,
+				});
 			debugRun.recordReview(reviewResult);
 
 			if (reviewResult.action !== "confirm") {
@@ -197,6 +202,9 @@ export class FlashcardWorkflow {
 
 			if (approvedCardCount === 0 && mode === "selection") {
 				new Notice(`No flashcards were kept for ${file.basename}.`);
+				if (!isBatchMode) {
+					await this.plugin.sidebar.completePendingSessionAfterWrite(file);
+				}
 				const result = {
 					action: "confirm",
 					insertedCount: 0,
@@ -206,6 +214,9 @@ export class FlashcardWorkflow {
 			}
 
 			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite);
+			if (!isBatchMode) {
+				await this.plugin.sidebar.completePendingSessionAfterWrite(file);
+			}
 			const updatedSectionCount = groupsToWrite.length;
 			const noticeParts = [
 				`Updated ${updatedSectionCount} section${updatedSectionCount === 1 ? "" : "s"} in ${file.basename}.`,
@@ -224,6 +235,9 @@ export class FlashcardWorkflow {
 			await debugRun.finish("inserted", result);
 			return result;
 		} catch (error) {
+			if (!isBatchMode) {
+				this.plugin.sidebar.resetPendingSessionAfterError(file);
+			}
 			debugRun.recordError("processSingleFile", error, {
 				filePath: file.path,
 				isBatchMode,
