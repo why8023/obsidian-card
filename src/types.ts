@@ -3,6 +3,8 @@ import type { TFile } from "obsidian";
 export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
 export type ContentChunkKind = "selection" | "section";
 export type CardBlockKind = "selection" | "heading" | "preamble";
+export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind", "sectionKey"] as const;
+export type SidebarTableColumnId = (typeof SIDEBAR_TABLE_COLUMN_IDS)[number];
 
 export interface TextRange {
 	from: number;

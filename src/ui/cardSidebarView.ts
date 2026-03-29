@@ -9,9 +9,22 @@ import {
 import type { WorkspaceLeaf } from "obsidian";
 
 import type ObsidianCardPlugin from "../main";
-import type { CardCandidate, ExistingCardEntry, ReviewGroup, SidebarReviewSession } from "../types";
+import type {
+	CardCandidate,
+	ExistingCardEntry,
+	ReviewGroup,
+	SidebarReviewSession,
+	SidebarTableColumnId,
+} from "../types";
+import { makePreview } from "../utils/markdown";
+import { OBCARD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
 import { setAllReviewGroupsApproved, setReviewGroupApproved } from "./reviewState";
-import { OBCARD_SIDEBAR_VIEW_TYPE } from "./cardSidebarController";
+import {
+	findSidebarTableColumn,
+	getSearchableCardValues,
+	SIDEBAR_TABLE_COLUMNS,
+	type SidebarTableColumnDefinition,
+} from "./sidebarTableColumns";
 
 type SidebarScope = "all" | "pending" | "inserted";
 
@@ -21,6 +34,9 @@ export class CardSidebarView extends ItemView {
 	private searchText = "";
 	private filterScope: SidebarScope = "all";
 	private actionsInitialized = false;
+	private insertedSelectionMode = false;
+	private selectedInsertedCardIds = new Set<string>();
+	private renderedDisplayFilePath: string | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: ObsidianCardPlugin) {
 		super(leaf);
@@ -68,6 +84,7 @@ export class CardSidebarView extends ItemView {
 
 		const rootEl = contentEl.createDiv({ cls: "obcard-sidebar" });
 		const displayFile = state.displayFile;
+		this.syncInsertedSelection(displayFile?.path ?? null, state.existingCards);
 
 		if (displayFile === null) {
 			this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to start reviewing.");
@@ -105,7 +122,23 @@ export class CardSidebarView extends ItemView {
 		}
 
 		if (hasInsertedScope) {
-			this.renderInsertedSection(rootEl, state.existingCards);
+			this.renderInsertedSection(rootEl, state.existingCards, state);
+		}
+	}
+
+	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
+		if (this.renderedDisplayFilePath !== displayFilePath) {
+			this.selectedInsertedCardIds.clear();
+			this.insertedSelectionMode = false;
+			this.renderedDisplayFilePath = displayFilePath;
+			return;
+		}
+
+		const validCardIds = new Set(cards.map((card) => card.id));
+		for (const cardId of Array.from(this.selectedInsertedCardIds)) {
+			if (!validCardIds.has(cardId)) {
+				this.selectedInsertedCardIds.delete(cardId);
+			}
 		}
 	}
 
@@ -135,7 +168,7 @@ export class CardSidebarView extends ItemView {
 		if (state.pendingCandidateCount > 0) {
 			chipsEl.createEl("span", {
 				cls: "obcard-sidebar-chip",
-				text: `Pending ${state.approvedPendingCount}/${state.pendingCandidateCount}`,
+				text: `Awaiting insert ${state.approvedPendingCount}/${state.pendingCandidateCount}`,
 			});
 		}
 
@@ -155,7 +188,7 @@ export class CardSidebarView extends ItemView {
 	private renderFilterBar(containerEl: HTMLElement): void {
 		const filterEl = containerEl.createDiv({ cls: "obcard-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
-		search.setPlaceholder("Filter cards, sections, or tags");
+		search.setPlaceholder("Filter question, target, or metadata");
 		search.setValue(this.searchText);
 		search.onChange((value) => {
 			this.searchText = value;
@@ -164,7 +197,7 @@ export class CardSidebarView extends ItemView {
 
 		const scopeEl = filterEl.createDiv({ cls: "obcard-sidebar-scope" });
 		this.createScopeButton(scopeEl, "All", "all");
-		this.createScopeButton(scopeEl, "Pending", "pending");
+		this.createScopeButton(scopeEl, "Awaiting", "pending");
 		this.createScopeButton(scopeEl, "Inserted", "inserted");
 	}
 
@@ -186,7 +219,11 @@ export class CardSidebarView extends ItemView {
 		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-section" });
 		sectionEl.createEl("h4", {
 			cls: "obcard-sidebar-section-title",
-			text: "Pending review",
+			text: "Awaiting insert",
+		});
+		sectionEl.createEl("p", {
+			cls: "obcard-sidebar-note",
+			text: "These cards are generated candidates. They are not written into the note until you confirm insert.",
 		});
 
 		const actionsEl = sectionEl.createDiv({ cls: "obcard-sidebar-actions" });
@@ -217,7 +254,7 @@ export class CardSidebarView extends ItemView {
 		const filteredGroups = this.getFilteredPendingGroups(session.groups);
 
 		if (filteredGroups.length === 0) {
-			this.renderEmptyState(listEl, "No pending cards match the current filter.");
+			this.renderEmptyState(listEl, "No awaiting cards match the current filter.");
 			return;
 		}
 
@@ -304,57 +341,261 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
-	private renderInsertedSection(containerEl: HTMLElement, cards: ExistingCardEntry[]): void {
+	private renderInsertedSection(
+		containerEl: HTMLElement,
+		cards: ExistingCardEntry[],
+		state: CardSidebarSnapshot,
+	): void {
 		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-section" });
-		sectionEl.createEl("h4", {
+		const headerEl = sectionEl.createDiv({ cls: "obcard-sidebar-section-header" });
+		headerEl.createEl("h4", {
 			cls: "obcard-sidebar-section-title",
 			text: "Inserted cards",
 		});
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
+		const selectedCount = this.selectedInsertedCardIds.size;
+		const actionsEl = headerEl.createDiv({ cls: "obcard-sidebar-actions" });
+
+		if (this.insertedSelectionMode) {
+			this.createActionButton(actionsEl, "Select all visible", () => {
+				for (const card of filteredCards) {
+					this.selectedInsertedCardIds.add(card.id);
+				}
+				this.render();
+			}, { disabled: state.isMutating || filteredCards.length === 0 });
+			this.createActionButton(actionsEl, "Clear selection", () => {
+				this.selectedInsertedCardIds.clear();
+				this.render();
+			}, { disabled: state.isMutating || selectedCount === 0 });
+			this.createActionButton(actionsEl, `Delete selected (${selectedCount})`, () => {
+				void this.handleDeleteSelectedCards();
+			}, { cta: true, disabled: state.isMutating || selectedCount === 0 });
+			this.createActionButton(actionsEl, "Done", () => {
+				this.insertedSelectionMode = false;
+				this.selectedInsertedCardIds.clear();
+				this.render();
+			}, { disabled: state.isMutating });
+		} else {
+			this.createActionButton(actionsEl, "Select cards", () => {
+				this.insertedSelectionMode = true;
+				this.render();
+			}, { disabled: state.isMutating || filteredCards.length === 0 });
+		}
+
+		if (state.hasUndoableDelete) {
+			this.createActionButton(actionsEl, "Undo delete", () => {
+				void this.handleUndoDelete();
+			}, { disabled: state.isMutating });
+		}
+
+		this.renderColumnSettings(sectionEl, state.isMutating);
+
+		if (this.insertedSelectionMode) {
+			sectionEl.createEl("p", {
+				cls: "obcard-sidebar-note",
+				text: selectedCount > 0
+					? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected for deletion.`
+					: "Selection mode is on. Choose one or more cards to delete.",
+			});
+		}
+
 		if (filteredCards.length === 0) {
 			this.renderEmptyState(sectionEl, "No inserted cards match the current filter.");
 			return;
 		}
 
-		const listEl = sectionEl.createDiv({ cls: "obcard-sidebar-inserted-list" });
-		for (const card of filteredCards) {
-			const buttonEl = listEl.createEl("button", {
-				cls: "obcard-sidebar-inserted-card",
+		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating);
+	}
+
+	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
+		const detailsEl = sectionEl.createEl("details", { cls: "obcard-sidebar-column-settings" });
+		detailsEl.createEl("summary", {
+			text: "Visible columns",
+		});
+
+		const optionsEl = detailsEl.createDiv({ cls: "obcard-sidebar-column-options" });
+		for (const column of SIDEBAR_TABLE_COLUMNS) {
+			const optionEl = optionsEl.createEl("label", {
+				cls: "obcard-sidebar-column-option",
 				attr: {
-					type: "button",
+					title: column.description,
 				},
 			});
-			buttonEl.addEventListener("click", () => {
-				void this.plugin.sidebar.revealCard(card);
+			const checkboxEl = optionEl.createEl("input", {
+				attr: {
+					type: "checkbox",
+				},
 			});
+			checkboxEl.checked = this.plugin.settings.sidebar.visibleTableColumns.includes(column.id);
+			checkboxEl.disabled = isMutating;
+			checkboxEl.addEventListener("change", () => {
+				void this.toggleVisibleTableColumn(column.id, checkboxEl.checked);
+			});
+			optionEl.createSpan({
+				text: column.label,
+			});
+		}
+	}
 
-			buttonEl.createEl("div", {
-				cls: "obcard-sidebar-card-front",
-				text: card.front,
-			});
-			buttonEl.createEl("div", {
-				cls: "obcard-sidebar-card-back",
-				text: card.back,
-			});
+	private renderInsertedTable(containerEl: HTMLElement, cards: ExistingCardEntry[], isMutating: boolean): void {
+		const visibleColumns = this.getVisibleInsertedColumns();
+		const tableWrapperEl = containerEl.createDiv({ cls: "obcard-sidebar-table-wrapper" });
+		const tableEl = tableWrapperEl.createEl("table", { cls: "obcard-sidebar-table" });
+		const tableHeadEl = tableEl.createEl("thead");
+		const headerRowEl = tableHeadEl.createEl("tr");
 
-			const metaEl = buttonEl.createDiv({ cls: "obcard-sidebar-card-meta" });
-			metaEl.createEl("span", {
-				text: card.titleHint,
+		if (this.insertedSelectionMode) {
+			const selectAllCell = headerRowEl.createEl("th", { cls: "obcard-sidebar-table-select-cell" });
+			const selectAllCheckbox = selectAllCell.createEl("input", {
+				attr: {
+					type: "checkbox",
+					"aria-label": "Select all visible cards",
+				},
 			});
-			metaEl.createEl("span", {
-				text: `Card ${card.indexInSection + 1}`,
-			});
-
-			if (card.tags.length > 0) {
-				const tagsEl = buttonEl.createDiv({ cls: "obcard-sidebar-tag-list" });
-				for (const tag of card.tags) {
-					tagsEl.createEl("span", {
-						cls: "obcard-sidebar-chip",
-						text: tag,
-					});
+			const visibleCardIds = cards.map((card) => card.id);
+			const selectedVisibleCount = visibleCardIds.filter((cardId) => this.selectedInsertedCardIds.has(cardId)).length;
+			selectAllCheckbox.checked = selectedVisibleCount > 0 && selectedVisibleCount === visibleCardIds.length;
+			selectAllCheckbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCardIds.length;
+			selectAllCheckbox.disabled = isMutating || visibleCardIds.length === 0;
+			selectAllCheckbox.addEventListener("change", () => {
+				if (selectAllCheckbox.checked) {
+					for (const cardId of visibleCardIds) {
+						this.selectedInsertedCardIds.add(cardId);
+					}
+				} else {
+					for (const cardId of visibleCardIds) {
+						this.selectedInsertedCardIds.delete(cardId);
+					}
 				}
+				this.render();
+			});
+		}
+
+		headerRowEl.createEl("th", {
+			text: "Question",
+		});
+
+		for (const column of visibleColumns) {
+			headerRowEl.createEl("th", {
+				text: column.label,
+			});
+		}
+
+		headerRowEl.createEl("th", {
+			cls: "obcard-sidebar-table-action-header",
+			text: "Action",
+		});
+
+		const tableBodyEl = tableEl.createEl("tbody");
+		for (const card of cards) {
+			const rowEl = tableBodyEl.createEl("tr", { cls: "obcard-sidebar-table-row" });
+			if (this.selectedInsertedCardIds.has(card.id)) {
+				rowEl.addClass("is-selected");
 			}
+
+			if (this.insertedSelectionMode) {
+				const selectionCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-select-cell" });
+				const checkboxEl = selectionCell.createEl("input", {
+					attr: {
+						type: "checkbox",
+						"aria-label": `Select ${card.front}`,
+					},
+				});
+				checkboxEl.checked = this.selectedInsertedCardIds.has(card.id);
+				checkboxEl.disabled = isMutating;
+				checkboxEl.addEventListener("change", () => {
+					if (checkboxEl.checked) {
+						this.selectedInsertedCardIds.add(card.id);
+					} else {
+						this.selectedInsertedCardIds.delete(card.id);
+					}
+					this.render();
+				});
+			}
+
+			this.createInsertedTableCell(
+				rowEl,
+				makePreview(card.front, this.plugin.settings.sidebar.frontPreviewLength),
+				card.front,
+				"obcard-sidebar-table-question",
+			);
+
+			for (const column of visibleColumns) {
+				const rawValue = column.getValue(card);
+				this.createInsertedTableCell(
+					rowEl,
+					rawValue.length > 0 ? makePreview(rawValue, column.previewLength) : "—",
+					rawValue,
+				);
+			}
+
+			const actionsCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-actions" });
+			const locateButton = new ButtonComponent(actionsCell)
+				.setButtonText("Locate")
+				.setDisabled(isMutating)
+				.onClick(() => {
+					void this.plugin.sidebar.revealCard(card);
+				});
+			locateButton.buttonEl.addClass("obcard-sidebar-table-action");
+		}
+	}
+
+	private createInsertedTableCell(
+		rowEl: HTMLElement,
+		text: string,
+		title: string,
+		extraClass = "",
+	): void {
+		const cellEl = rowEl.createEl("td");
+		if (extraClass.length > 0) {
+			cellEl.addClass(extraClass);
+		}
+
+		cellEl.setAttr("title", title);
+		cellEl.createEl("span", {
+			cls: "obcard-sidebar-table-text",
+			text,
+		});
+	}
+
+	private async toggleVisibleTableColumn(columnId: SidebarTableColumnId, isVisible: boolean): Promise<void> {
+		const columns = new Set(this.plugin.settings.sidebar.visibleTableColumns);
+		if (isVisible) {
+			columns.add(columnId);
+		} else {
+			columns.delete(columnId);
+		}
+
+		this.plugin.settings.sidebar.visibleTableColumns = SIDEBAR_TABLE_COLUMNS
+			.filter((column) => columns.has(column.id))
+			.map((column) => column.id);
+		await this.plugin.saveSettings();
+		this.render();
+	}
+
+	private async handleDeleteSelectedCards(): Promise<void> {
+		const selectedCardIds = Array.from(this.selectedInsertedCardIds);
+		if (selectedCardIds.length === 0) {
+			return;
+		}
+
+		try {
+			await this.plugin.sidebar.deleteInsertedCards(selectedCardIds);
+			this.selectedInsertedCardIds.clear();
+			this.insertedSelectionMode = false;
+			this.render();
+		} catch {
+			// Notice is already shown by the controller.
+		}
+	}
+
+	private async handleUndoDelete(): Promise<void> {
+		try {
+			await this.plugin.sidebar.undoDelete();
+			this.render();
+		} catch {
+			// Notice is already shown by the controller.
 		}
 	}
 
@@ -390,14 +631,14 @@ export class CardSidebarView extends ItemView {
 		return results;
 	}
 
+	private getVisibleInsertedColumns() {
+		return this.plugin.settings.sidebar.visibleTableColumns
+			.map((columnId) => findSidebarTableColumn(columnId))
+			.filter((column): column is SidebarTableColumnDefinition => column !== undefined);
+	}
+
 	private matchesCard(card: ExistingCardEntry): boolean {
-		return this.matchesText([
-			card.front,
-			card.back,
-			card.tags.join(" "),
-			card.titleHint,
-			card.metadata.headingPath.join(" > "),
-		]);
+		return this.matchesText(getSearchableCardValues(card));
 	}
 
 	private matchesText(values: string[]): boolean {

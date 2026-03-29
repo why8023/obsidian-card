@@ -4,6 +4,7 @@ import type ObsidianCardPlugin from "../main";
 import type { ExistingCardEntry, ReviewGroup, ReviewResult, SidebarReviewSession } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { cloneReviewGroups, collectApprovedGroups } from "./reviewState";
+import { deleteExistingCards, restoreDeletedCards } from "../writing/flashcardWriter";
 
 export const OBCARD_SIDEBAR_VIEW_TYPE = "obcard-sidebar";
 
@@ -17,6 +18,15 @@ export interface CardSidebarSnapshot {
 	displayFile: TFile | null;
 	pendingSession: SidebarReviewSession | null;
 	existingCards: ExistingCardEntry[];
+	isMutating: boolean;
+	hasUndoableDelete: boolean;
+}
+
+interface UndoDeleteOperation {
+	filePath: string;
+	deletedCount: number;
+	beforeContent: string;
+	afterContent: string;
 }
 
 export class CardSidebarController {
@@ -27,6 +37,8 @@ export class CardSidebarController {
 	private pendingSession: SidebarReviewSession | null = null;
 	private pendingResolve: ((result: ReviewResult) => void) | null = null;
 	private refreshToken = 0;
+	private isMutating = false;
+	private undoDeleteOperation: UndoDeleteOperation | null = null;
 
 	constructor(plugin: ObsidianCardPlugin) {
 		this.plugin = plugin;
@@ -60,11 +72,15 @@ export class CardSidebarController {
 	}
 
 	getSnapshot(): CardSidebarSnapshot {
+		const displayFile = this.getDisplayFile();
+
 		return {
 			activeFile: this.activeFile,
-			displayFile: this.getDisplayFile(),
+			displayFile,
 			pendingSession: this.pendingSession,
 			existingCards: [...this.existingCards],
+			isMutating: this.isMutating,
+			hasUndoableDelete: displayFile !== null && this.undoDeleteOperation?.filePath === displayFile.path,
 		};
 	}
 
@@ -160,6 +176,81 @@ export class CardSidebarController {
 		leaf.view.editor.scrollIntoView({ from, to }, true);
 	}
 
+	async deleteInsertedCards(cardIds: string[]): Promise<void> {
+		if (this.isMutating || cardIds.length === 0) {
+			return;
+		}
+
+		const file = this.getDisplayFile();
+		if (!isMarkdownFile(file)) {
+			return;
+		}
+
+		this.isMutating = true;
+		this.notify();
+
+		try {
+			const result = await deleteExistingCards(this.plugin.app.vault, file, cardIds);
+			if (result.deletedCount === 0) {
+				new Notice("No flashcards were deleted.");
+				return;
+			}
+
+			this.undoDeleteOperation = {
+				filePath: file.path,
+				deletedCount: result.deletedCount,
+				beforeContent: result.beforeContent,
+				afterContent: result.afterContent,
+			};
+
+			await this.refreshDisplayedFileCards(file);
+			new Notice(`Deleted ${result.deletedCount} flashcard${result.deletedCount === 1 ? "" : "s"}. Use Undo delete to restore them.`);
+		} catch (error) {
+			new Notice(`Failed to delete flashcards: ${getErrorMessage(error)}`);
+			throw error;
+		} finally {
+			this.isMutating = false;
+			this.notify();
+		}
+	}
+
+	async undoDelete(): Promise<void> {
+		if (this.isMutating || this.undoDeleteOperation === null) {
+			return;
+		}
+
+		const file = this.plugin.app.vault.getAbstractFileByPath(this.undoDeleteOperation.filePath);
+		if (!isMarkdownFile(file)) {
+			this.undoDeleteOperation = null;
+			this.notify();
+			new Notice("Undo delete is no longer available because the file was removed.");
+			return;
+		}
+
+		this.isMutating = true;
+		this.notify();
+
+		try {
+			const operation = this.undoDeleteOperation;
+			const restored = await restoreDeletedCards(this.plugin.app.vault, file, operation);
+			if (!restored) {
+				this.undoDeleteOperation = null;
+				new Notice("Undo delete is no longer available because the file changed.");
+				return;
+			}
+
+			this.undoDeleteOperation = null;
+			await this.refreshDisplayedFileCards(file);
+			new Notice(`Restored ${operation.deletedCount} flashcard${operation.deletedCount === 1 ? "" : "s"}.`);
+		} catch (error) {
+			new Notice(`Failed to restore flashcards: ${getErrorMessage(error)}`);
+			throw error;
+		} finally {
+			this.isMutating = false;
+			this.notify();
+		}
+	}
+
 	private async ensureViewOpen(): Promise<void> {
 		const existingLeaf = this.plugin.app.workspace.getLeavesOfType(OBCARD_SIDEBAR_VIEW_TYPE)[0];
 		const leaf = existingLeaf ?? this.plugin.app.workspace.getRightLeaf(false) ?? this.plugin.app.workspace.getLeaf(false);
@@ -234,6 +325,10 @@ export class CardSidebarController {
 			this.pendingSession.filePath = file.path;
 		}
 
+		if (this.undoDeleteOperation?.filePath === oldPath) {
+			this.undoDeleteOperation.filePath = file.path;
+		}
+
 		if (this.getDisplayFile()?.path === file.path || oldPath === this.getDisplayFile()?.path) {
 			void this.refreshDisplayedFileCards();
 		}
@@ -252,7 +347,11 @@ export class CardSidebarController {
 				action: "cancel",
 				approvedGroups: [],
 			});
-			new Notice("Pending flashcard review was cleared because the file was removed.");
+			new Notice("Awaiting flashcard review was cleared because the file was removed.");
+		}
+
+		if (this.undoDeleteOperation?.filePath === file.path) {
+			this.undoDeleteOperation = null;
 		}
 
 		if (this.getDisplayFile()?.path === file.path) {
@@ -270,4 +369,12 @@ export class CardSidebarController {
 
 function isMarkdownFile(file: TAbstractFile | null): file is TFile {
 	return file instanceof TFile && file.extension.toLowerCase() === "md";
+}
+
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return String(error);
 }

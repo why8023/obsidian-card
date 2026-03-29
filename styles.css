@@ -149,11 +149,17 @@
 
 .obcard-sidebar-filter,
 .obcard-sidebar-section,
-.obcard-sidebar-card,
-.obcard-sidebar-inserted-card {
+.obcard-sidebar-card {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
+}
+
+.obcard-sidebar-section-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
 }
 
 .obcard-sidebar-scope-button {
@@ -231,34 +237,96 @@
 	width: 100%;
 }
 
-.obcard-sidebar-inserted-card {
-	padding: 12px;
-	border-radius: 12px;
+.obcard-sidebar-column-settings {
 	border: 1px solid var(--background-modifier-border);
-	background: var(--background-secondary);
-	text-align: left;
+	border-radius: 10px;
+	background: var(--background-primary-alt);
+	padding: 8px 10px;
+}
+
+.obcard-sidebar-column-settings summary {
 	cursor: var(--cursor);
-}
-
-.obcard-sidebar-inserted-card:hover {
-	border-color: var(--interactive-accent);
-	background: var(--background-modifier-hover);
-}
-
-.obcard-sidebar-card-front {
-	font-weight: 600;
-}
-
-.obcard-sidebar-card-back {
-	color: var(--text-muted);
-	white-space: pre-wrap;
-	word-break: break-word;
-}
-
-.obcard-sidebar-card-meta {
-	display: flex;
-	justify-content: space-between;
-	gap: 12px;
 	font-size: 12px;
+	font-weight: 600;
 	color: var(--text-muted);
+}
+
+.obcard-sidebar-column-options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px 12px;
+	margin-top: 10px;
+}
+
+.obcard-sidebar-column-option {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	color: var(--text-normal);
+}
+
+.obcard-sidebar-table-wrapper {
+	overflow-x: auto;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 12px;
+	background: var(--background-secondary);
+}
+
+.obcard-sidebar-table {
+	width: 100%;
+	border-collapse: collapse;
+	table-layout: fixed;
+}
+
+.obcard-sidebar-table th,
+.obcard-sidebar-table td {
+	padding: 9px 10px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	text-align: left;
+	vertical-align: middle;
+}
+
+.obcard-sidebar-table th {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-muted);
+	background: var(--background-primary-alt);
+}
+
+.obcard-sidebar-table tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.obcard-sidebar-table-row.is-selected {
+	background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.obcard-sidebar-table-select-cell {
+	width: 34px;
+	text-align: center;
+}
+
+.obcard-sidebar-table-question {
+	width: 42%;
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.obcard-sidebar-table-action-header,
+.obcard-sidebar-table-actions {
+	width: 88px;
+	text-align: right;
+}
+
+.obcard-sidebar-table-text {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.obcard-sidebar-table-action {
+	width: 100%;
+	justify-content: center;
 }

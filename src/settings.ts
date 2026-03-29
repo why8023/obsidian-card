@@ -13,8 +13,9 @@ import {
 	type FlashcardProvider,
 	type FlashcardProviderPresetType,
 } from "./providerConfig";
+import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 2;
+const SETTINGS_SCHEMA_VERSION = 3;
 
 export interface FlashcardGenerationSettings {
 	model: string;
@@ -26,11 +27,17 @@ export interface ObsidianCardDebugSettings {
 	enabled: boolean;
 }
 
+export interface ObsidianCardSidebarSettings {
+	frontPreviewLength: number;
+	visibleTableColumns: SidebarTableColumnId[];
+}
+
 export interface ObsidianCardSettings {
 	version: number;
 	providers: FlashcardProvider[];
 	activeProviderId: string;
 	generation: FlashcardGenerationSettings;
+	sidebar: ObsidianCardSidebarSettings;
 	debug: ObsidianCardDebugSettings;
 }
 
@@ -48,6 +55,11 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	temperature: 0.2,
 };
 
+export const DEFAULT_SIDEBAR_SETTINGS: ObsidianCardSidebarSettings = {
+	frontPreviewLength: 72,
+	visibleTableColumns: ["target"],
+};
+
 export const DEFAULT_SETTINGS: ObsidianCardSettings = createDefaultSettings();
 
 export function createDefaultSettings(): ObsidianCardSettings {
@@ -57,6 +69,9 @@ export function createDefaultSettings(): ObsidianCardSettings {
 		activeProviderId: "primary",
 		generation: {
 			...DEFAULT_GENERATION_SETTINGS,
+		},
+		sidebar: {
+			...DEFAULT_SIDEBAR_SETTINGS,
 		},
 		debug: {
 			enabled: false,
@@ -219,6 +234,25 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 					}
 				}));
 
+		new Setting(containerEl)
+			.setName("Sidebar")
+			.setDesc("Display settings for the inserted flashcard table in the sidebar.")
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName("Question preview length")
+			.setDesc("Maximum characters shown for each question in the inserted cards table. Range: 20 to 200.")
+			.addText((text) => text
+				.setPlaceholder(String(DEFAULT_SIDEBAR_SETTINGS.frontPreviewLength))
+				.setValue(String(this.plugin.settings.sidebar.frontPreviewLength))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue >= 20 && parsedValue <= 200) {
+						this.plugin.settings.sidebar.frontPreviewLength = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
 		const debugArtifactsDirectory = getDebugArtifactsDirectory(
 			this.plugin.app.vault.configDir,
 			this.plugin.manifest.dir,
@@ -273,6 +307,7 @@ function parseCurrentSettings(data: Record<string, unknown>): ObsidianCardSettin
 			maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, defaults.generation.maxCardsPerChunk, { min: 1, max: 20 }),
 			temperature: readNumber(generationSource.temperature, defaults.generation.temperature, { min: 0, max: 2 }),
 		},
+		sidebar: parseSidebarSettings(data.sidebar, defaults.sidebar),
 		debug: {
 			enabled: readBoolean(data.debugEnabled, readBoolean(isRecord(data.debug) ? data.debug.enabled : undefined, defaults.debug.enabled)),
 		},
@@ -299,6 +334,9 @@ function parseLegacySettings(data: LegacySettings): ObsidianCardSettings {
 			model: readString(data.model, getDefaultModelForPreset(provider.presetType)),
 			maxCardsPerChunk: readNumber(data.maxCardsPerChunk, defaults.generation.maxCardsPerChunk, { min: 1, max: 20 }),
 			temperature: readNumber(data.temperature, defaults.generation.temperature, { min: 0, max: 2 }),
+		},
+		sidebar: {
+			...defaults.sidebar,
 		},
 		debug: {
 			enabled: defaults.debug.enabled,
@@ -354,6 +392,27 @@ function readNumber(value: unknown, fallback: number, range: { min: number; max:
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
 	return typeof value === "boolean" ? value : fallback;
+}
+
+function parseSidebarSettings(value: unknown, fallback: ObsidianCardSidebarSettings): ObsidianCardSidebarSettings {
+	const sidebarSource = isRecord(value) ? value : {};
+
+	return {
+		frontPreviewLength: readNumber(sidebarSource.frontPreviewLength, fallback.frontPreviewLength, { min: 20, max: 200 }),
+		visibleTableColumns: readSidebarColumns(sidebarSource.visibleTableColumns, fallback.visibleTableColumns),
+	};
+}
+
+function readSidebarColumns(value: unknown, fallback: SidebarTableColumnId[]): SidebarTableColumnId[] {
+	if (!Array.isArray(value)) {
+		return [...fallback];
+	}
+
+	return value
+		.filter((entry): entry is SidebarTableColumnId => (
+			typeof entry === "string" && SIDEBAR_TABLE_COLUMN_IDS.includes(entry as SidebarTableColumnId)
+		))
+		.filter((entry, index, items) => items.indexOf(entry) === index);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
