@@ -232,9 +232,10 @@ function removeExistingCardsFromContent(
 	const replacements = mergeRanges(
 		deletedEntries.map((entry) => entry.blockRange),
 	);
+	const newline = detectNewline(content);
 
 	return {
-		content: applyRangeReplacements(content, replacements.map((range) => ({ range, value: "" }))),
+		content: removeRangesWithWhitespaceCleanup(content, replacements, newline),
 		deletedCount: deletedEntries.length,
 	};
 }
@@ -260,10 +261,65 @@ function mergeRanges(ranges: TextRange[]): TextRange[] {
 	return mergedRanges;
 }
 
-function applyRangeReplacements(content: string, replacements: Array<{ range: TextRange; value: string }>): string {
-	return [...replacements]
-		.sort((left, right) => right.range.from - left.range.from || right.range.to - left.range.to)
-		.reduce((currentContent, replacement) => (
-			`${currentContent.slice(0, replacement.range.from)}${replacement.value}${currentContent.slice(replacement.range.to)}`
-		), content);
+function removeRangesWithWhitespaceCleanup(content: string, ranges: TextRange[], newline: string): string {
+	return [...ranges]
+		.sort((left, right) => right.from - left.from || right.to - left.to)
+		.reduce((currentContent, range) => {
+			const before = currentContent.slice(0, range.from);
+			const after = currentContent.slice(range.to);
+			const trimmedBefore = trimTrailingBlankLines(before, newline);
+			const trimmedAfter = trimLeadingBlankLines(after, newline);
+			const hasTextBefore = /\S/.test(trimmedBefore);
+			const hasTextAfter = /\S/.test(trimmedAfter);
+			const separator = resolveDeletionSeparator(
+				before,
+				after,
+				currentContent.endsWith(newline),
+				hasTextBefore,
+				hasTextAfter,
+				newline,
+			);
+			return `${trimmedBefore}${separator}${trimmedAfter}`;
+		}, content);
+}
+
+function resolveDeletionSeparator(
+	before: string,
+	after: string,
+	fileEndedWithNewline: boolean,
+	hasTextBefore: boolean,
+	hasTextAfter: boolean,
+	newline: string,
+): string {
+	if (hasTextBefore && hasTextAfter) {
+		return endsWithBlankLine(before, newline) || startsWithBlankLine(after, newline)
+			? `${newline}${newline}`
+			: newline;
+	}
+
+	if (hasTextBefore && fileEndedWithNewline) {
+		return newline;
+	}
+
+	return "";
+}
+
+function trimTrailingBlankLines(value: string, newline: string): string {
+	return value.replace(new RegExp(`(?:${escapeRegExp(newline)}[\\t ]*)+$`), "");
+}
+
+function trimLeadingBlankLines(value: string, newline: string): string {
+	return value.replace(new RegExp(`^(?:[\\t ]*${escapeRegExp(newline)})+`), "");
+}
+
+function endsWithBlankLine(value: string, newline: string): boolean {
+	return new RegExp(`${escapeRegExp(newline)}[\\t ]*${escapeRegExp(newline)}[\\t ]*$`).test(value);
+}
+
+function startsWithBlankLine(value: string, newline: string): boolean {
+	return new RegExp(`^[\\t ]*${escapeRegExp(newline)}[\\t ]*${escapeRegExp(newline)}`).test(value);
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

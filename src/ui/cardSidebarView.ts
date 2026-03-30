@@ -2,6 +2,7 @@ import {
 	ButtonComponent,
 	ItemView,
 	SearchComponent,
+	setIcon,
 } from "obsidian";
 
 import type { WorkspaceLeaf } from "obsidian";
@@ -20,10 +21,13 @@ import {
 	type SidebarTableColumnDefinition,
 } from "./sidebarTableColumns";
 
+type CardFilterScope = "all" | "generated";
+
 export class CardSidebarView extends ItemView {
 	private readonly plugin: ObcdPlugin;
 	private unsubscribe: (() => void) | null = null;
 	private searchText = "";
+	private cardFilterScope: CardFilterScope = "all";
 	private actionsInitialized = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
@@ -85,15 +89,18 @@ export class CardSidebarView extends ItemView {
 
 		if (activeFile === null) {
 			if (state.generationProgress === null) {
-				this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to inspect inserted cards.");
+				this.renderEmptyState(rootEl, "Open a Markdown file to inspect flashcards.");
 			}
 			return;
 		}
 
+		const generatedCardCount = state.existingCards.filter((card) => card.isPluginGenerated).length;
+
 		this.renderFileHeader(rootEl, {
 			name: activeFile.basename,
 			path: activeFile.path,
-			insertedCount: state.existingCards.length,
+			cardCount: state.existingCards.length,
+			generatedCardCount,
 			isGeneratingCurrentFile: state.generationProgress !== null,
 		});
 
@@ -177,7 +184,8 @@ export class CardSidebarView extends ItemView {
 		state: {
 			name: string;
 			path: string;
-			insertedCount: number;
+			cardCount: number;
+			generatedCardCount: number;
 			isGeneratingCurrentFile: boolean;
 		},
 	): void {
@@ -194,12 +202,16 @@ export class CardSidebarView extends ItemView {
 		const chipsEl = headerEl.createDiv({ cls: "obcd-sidebar-chips" });
 		chipsEl.createEl("span", {
 			cls: "obcd-sidebar-chip",
-			text: `Inserted ${state.insertedCount}`,
+			text: `Cards ${state.cardCount}`,
+		});
+		chipsEl.createEl("span", {
+			cls: "obcd-sidebar-chip",
+			text: `Plugin ${state.generatedCardCount}`,
 		});
 
 		const actionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
 		const generateButton = new ButtonComponent(actionsEl)
-			.setButtonText(state.isGeneratingCurrentFile ? "Generating current file..." : "Generate current file")
+			.setButtonText(state.isGeneratingCurrentFile ? "Generating cards..." : "Generate cards")
 			.setDisabled(state.isGeneratingCurrentFile)
 			.onClick(() => {
 				void this.plugin.workflow.generateForCurrentFile();
@@ -211,7 +223,7 @@ export class CardSidebarView extends ItemView {
 	private renderSearchBar(containerEl: HTMLElement): void {
 		const filterEl = containerEl.createDiv({ cls: "obcd-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
-		search.setPlaceholder("Filter question, target, tags, or metadata");
+		search.setPlaceholder("Filter questions, tags, type, or source");
 		search.setValue(this.searchText);
 		search.onChange((value) => {
 			this.searchText = value;
@@ -227,10 +239,9 @@ export class CardSidebarView extends ItemView {
 	): void {
 		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
 		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
-		headerEl.createEl("h4", {
-			cls: "obcd-sidebar-section-title",
-			text: "Inserted cards",
-		});
+
+		const generatedCardCount = cards.filter((card) => card.isPluginGenerated).length;
+		this.renderScopeFilters(headerEl, cards.length, generatedCardCount, state.isMutating);
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
@@ -274,19 +285,28 @@ export class CardSidebarView extends ItemView {
 
 		this.renderColumnSettings(sectionEl, state.isMutating);
 
-		sectionEl.createEl("p", {
-			cls: "obcd-sidebar-note",
-			text: selectedCount > 0
-				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected. Click a card row to locate it in the note. Only checkboxes change selection.`
-				: "Click a card row to locate it in the note. Use checkboxes to select cards, or delete a single card from its row.",
-		});
-
 		if (filteredCards.length === 0) {
-			this.renderEmptyState(sectionEl, "No inserted cards match the current filter.");
+			this.renderEmptyState(
+				sectionEl,
+				this.cardFilterScope === "generated"
+					? "No plugin-generated flashcards match the current filter."
+					: "No flashcards match the current filter.",
+			);
 			return;
 		}
 
 		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating);
+	}
+
+	private renderScopeFilters(
+		containerEl: HTMLElement,
+		totalCount: number,
+		generatedCount: number,
+		isMutating: boolean,
+	): void {
+		const scopeEl = containerEl.createDiv({ cls: "obcd-sidebar-scope" });
+		this.createScopeButton(scopeEl, `All cards (${totalCount})`, "all", isMutating);
+		this.createScopeButton(scopeEl, `Plugin (${generatedCount})`, "generated", isMutating);
 	}
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
@@ -378,6 +398,7 @@ export class CardSidebarView extends ItemView {
 		for (const card of cards) {
 			const rowEl = tableBodyEl.createEl("tr", { cls: "obcd-sidebar-table-row" });
 			rowEl.addClass("is-selectable");
+			rowEl.addClass(card.isPluginGenerated ? "is-plugin-generated" : "is-other-card");
 			rowEl.tabIndex = 0;
 			rowEl.setAttr("aria-selected", this.selectedInsertedCardIds.has(card.id) ? "true" : "false");
 			if (this.selectedInsertedCardIds.has(card.id)) {
@@ -422,23 +443,29 @@ export class CardSidebarView extends ItemView {
 
 			const actionCell = rowEl.createEl("td", { cls: "obcd-sidebar-table-action-cell" });
 			const isConfirmingDelete = this.pendingSingleDeleteCardId === card.id;
-			const deleteButton = new ButtonComponent(actionCell)
-				.setButtonText(isConfirmingDelete ? "Confirm delete" : "Delete")
-				.setDisabled(isMutating)
-				.onClick(() => {
-					if (isConfirmingDelete) {
-						void this.handleDeleteCards([card.id]);
-						return;
-					}
-
-					this.pendingSingleDeleteCardId = card.id;
-					this.isBulkDeleteConfirmationPending = false;
-					this.render();
-				});
-			deleteButton.buttonEl.addClass("obcd-sidebar-inline-action");
+			const deleteButtonEl = actionCell.createEl("button", {
+				cls: "clickable-icon obcd-sidebar-inline-icon",
+				attr: {
+					type: "button",
+					"aria-label": isConfirmingDelete ? `Confirm delete ${card.front}` : `Delete ${card.front}`,
+					title: isConfirmingDelete ? "Confirm delete" : "Delete card",
+				},
+			});
+			deleteButtonEl.disabled = isMutating;
+			setIcon(deleteButtonEl, isConfirmingDelete ? "check" : "trash-2");
 			if (isConfirmingDelete) {
-				deleteButton.buttonEl.addClass("is-confirming");
+				deleteButtonEl.addClass("is-confirming");
 			}
+			deleteButtonEl.addEventListener("click", () => {
+				if (isConfirmingDelete) {
+					void this.handleDeleteCards([card.id]);
+					return;
+				}
+
+				this.pendingSingleDeleteCardId = card.id;
+				this.isBulkDeleteConfirmationPending = false;
+				this.render();
+			});
 		}
 	}
 
@@ -531,6 +558,9 @@ export class CardSidebarView extends ItemView {
 	}
 
 	private matchesCard(card: ExistingCardEntry): boolean {
+		if (this.cardFilterScope === "generated" && !card.isPluginGenerated) {
+			return false;
+		}
 		return this.matchesText(getSearchableCardValues(card));
 	}
 
@@ -561,6 +591,30 @@ export class CardSidebarView extends ItemView {
 
 		if (options.cta) {
 			button.setCta();
+		}
+	}
+
+	private createScopeButton(
+		containerEl: HTMLElement,
+		label: string,
+		scope: CardFilterScope,
+		isMutating: boolean,
+	): void {
+		const button = new ButtonComponent(containerEl)
+			.setButtonText(label)
+			.setDisabled(isMutating)
+			.onClick(() => {
+				if (this.cardFilterScope === scope) {
+					return;
+				}
+
+				this.cardFilterScope = scope;
+				this.resetDeleteConfirmations();
+				this.render();
+			});
+		button.buttonEl.addClass("obcd-sidebar-scope-button");
+		if (this.cardFilterScope === scope) {
+			button.buttonEl.addClass("is-active");
 		}
 	}
 

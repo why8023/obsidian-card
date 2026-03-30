@@ -84,6 +84,7 @@ export interface ExistingCardEntry {
 	back: string;
 	tags: string[];
 	type: string;
+	isPluginGenerated: boolean;
 	targetLabel: string;
 }
 

@@ -34,11 +34,8 @@ export function collectExistingCardEntries(file: TFile, content: string): Existi
 
 		searchOffset = parsedCard.range.to;
 
-		if (parsedCard.attributes.type !== GENERATED_CARD_TYPE) {
-			continue;
-		}
-
 		const blockRange = expandRangeToIncludeObarCustomNote(content, parsedCard.range);
+		const isPluginGenerated = parsedCard.attributes.type === GENERATED_CARD_TYPE;
 		entries.push({
 			id: buildCardId(parsedCard, idOccurrences),
 			file,
@@ -49,7 +46,8 @@ export function collectExistingCardEntries(file: TFile, content: string): Existi
 			back: parsedCard.back,
 			tags: parsedCard.attributes.tags,
 			type: parsedCard.attributes.type,
-			targetLabel: "Generated",
+			isPluginGenerated,
+			targetLabel: isPluginGenerated ? "Plugin" : "Other",
 		});
 	}
 
