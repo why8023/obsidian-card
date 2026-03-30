@@ -1,6 +1,6 @@
 {
 	"name": "obcd",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "Obsidian plugin for generating and reviewing BASIC flashcards",
 	"main": "main.js",
 	"type": "module",
