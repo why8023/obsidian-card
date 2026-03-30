@@ -1,9 +1,9 @@
 import type { TextRange } from "./types";
 
 const OBAR_CUSTOM_NOTE_START_PATTERN =
-	/<!--\s*OBAR-CUSTOM-NOTE-START:([A-Za-z0-9-]+)\s*-->/g;
+	/<!--\s*obar-note-start:([A-Za-z0-9-]+)\s*-->/g;
 const OBAR_CUSTOM_NOTE_END_PATTERN =
-	/<!--\s*OBAR-CUSTOM-NOTE-END:([A-Za-z0-9-]+)\s*-->/g;
+	/<!--\s*obar-note-end:([A-Za-z0-9-]+)\s*-->/g;
 const OBAR_NOTE_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const DEFAULT_OBAR_NOTE_ID_LENGTH = 12;
 
@@ -64,9 +64,9 @@ export function renderObarWrappedBlock(block: string, newline: string): string {
 	const noteId = createObarCustomNoteId();
 
 	return [
-		`<!-- OBAR-CUSTOM-NOTE-START:${noteId}-->`,
+		`<!-- obar-note-start:${noteId}-->`,
 		innerContent,
-		`<!-- OBAR-CUSTOM-NOTE-END:${noteId}-->`,
+		`<!-- obar-note-end:${noteId}-->`,
 	].join(newline);
 }
 
