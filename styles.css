@@ -264,6 +264,12 @@
 	margin: 0;
 }
 
+.obcd-sidebar-table-action-cell {
+	width: 120px;
+	text-align: right;
+	white-space: nowrap;
+}
+
 .obcd-sidebar-table-question {
 	width: 48%;
 	font-weight: 600;
@@ -275,5 +281,14 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.obcd-sidebar-inline-action {
+	min-width: 96px;
+}
+
+.obcd-sidebar-inline-action.is-confirming {
+	border-color: var(--text-error);
+	color: var(--text-error);
 }
 

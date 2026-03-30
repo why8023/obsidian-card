@@ -36,6 +36,8 @@ export class CardSidebarView extends ItemView {
 	private actionsInitialized = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
+	private pendingSingleDeleteCardId: string | null = null;
+	private isBulkDeleteConfirmationPending = false;
 	private renderedDisplayFilePath: string | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: ObcdPlugin) {
@@ -135,6 +137,7 @@ export class CardSidebarView extends ItemView {
 	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
 		if (this.renderedDisplayFilePath !== displayFilePath) {
 			this.selectedInsertedCardIds.clear();
+			this.resetDeleteConfirmations();
 			this.renderedDisplayFilePath = displayFilePath;
 			return;
 		}
@@ -144,6 +147,14 @@ export class CardSidebarView extends ItemView {
 			if (!validCardIds.has(cardId)) {
 				this.selectedInsertedCardIds.delete(cardId);
 			}
+		}
+
+		if (this.pendingSingleDeleteCardId !== null && !validCardIds.has(this.pendingSingleDeleteCardId)) {
+			this.pendingSingleDeleteCardId = null;
+		}
+
+		if (this.selectedInsertedCardIds.size === 0) {
+			this.isBulkDeleteConfirmationPending = false;
 		}
 	}
 
@@ -244,6 +255,7 @@ export class CardSidebarView extends ItemView {
 		search.setValue(this.searchText);
 		search.onChange((value) => {
 			this.searchText = value;
+			this.resetDeleteConfirmations();
 			this.render();
 		});
 
@@ -258,6 +270,7 @@ export class CardSidebarView extends ItemView {
 			.setButtonText(label)
 			.onClick(() => {
 				this.filterScope = value;
+				this.resetDeleteConfirmations();
 				this.render();
 			});
 
@@ -414,15 +427,29 @@ export class CardSidebarView extends ItemView {
 				for (const card of filteredCards) {
 					this.selectedInsertedCardIds.add(card.id);
 				}
+				this.resetDeleteConfirmations();
 				this.render();
 			}, { disabled: state.isMutating || filteredCards.length === 0 });
 			this.createActionButton(actionsEl, "Clear selection", () => {
 				this.selectedInsertedCardIds.clear();
+				this.resetDeleteConfirmations();
 				this.render();
 			}, { disabled: state.isMutating || selectedCount === 0 });
-			this.createActionButton(actionsEl, `Delete selected (${selectedCount})`, () => {
-				void this.handleDeleteSelectedCards();
-			}, { cta: true, disabled: state.isMutating || selectedCount === 0 });
+			this.createActionButton(
+				actionsEl,
+				this.isBulkDeleteConfirmationPending ? `Confirm delete (${selectedCount})` : `Delete selected (${selectedCount})`,
+				() => {
+					if (this.isBulkDeleteConfirmationPending) {
+						void this.handleDeleteCards(Array.from(this.selectedInsertedCardIds));
+						return;
+					}
+
+					this.isBulkDeleteConfirmationPending = true;
+					this.pendingSingleDeleteCardId = null;
+					this.render();
+				},
+				{ cta: true, disabled: state.isMutating || selectedCount === 0 },
+			);
 		}
 
 		if (state.hasUndoableDelete) {
@@ -436,8 +463,8 @@ export class CardSidebarView extends ItemView {
 		sectionEl.createEl("p", {
 			cls: "obcd-sidebar-note",
 			text: selectedCount > 0
-				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected. Click a card row to locate it in the note.`
-				: "Click a card row to locate it in the note. Select checkboxes to show bulk actions.",
+				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected. Click a card row to locate it in the note. Only checkboxes change selection.`
+				: "Click a card row to locate it in the note. Use checkboxes to select cards, or delete a single card from its row.",
 		});
 
 		if (filteredCards.length === 0) {
@@ -528,6 +555,11 @@ export class CardSidebarView extends ItemView {
 			});
 		}
 
+		headerRowEl.createEl("th", {
+			cls: "obcd-sidebar-table-action-cell",
+			text: "Actions",
+		});
+
 		const tableBodyEl = tableEl.createEl("tbody");
 		for (const card of cards) {
 			const rowEl = tableBodyEl.createEl("tr", { cls: "obcd-sidebar-table-row" });
@@ -554,6 +586,7 @@ export class CardSidebarView extends ItemView {
 				} else {
 					this.selectedInsertedCardIds.delete(card.id);
 				}
+				this.resetDeleteConfirmations();
 				this.render();
 			});
 
@@ -572,6 +605,26 @@ export class CardSidebarView extends ItemView {
 					rawValue,
 				);
 			}
+
+			const actionCell = rowEl.createEl("td", { cls: "obcd-sidebar-table-action-cell" });
+			const isConfirmingDelete = this.pendingSingleDeleteCardId === card.id;
+			const deleteButton = new ButtonComponent(actionCell)
+				.setButtonText(isConfirmingDelete ? "Confirm delete" : "Delete")
+				.setDisabled(isMutating)
+				.onClick(() => {
+					if (isConfirmingDelete) {
+						void this.handleDeleteCards([card.id]);
+						return;
+					}
+
+					this.pendingSingleDeleteCardId = card.id;
+					this.isBulkDeleteConfirmationPending = false;
+					this.render();
+				});
+			deleteButton.buttonEl.addClass("obcd-sidebar-inline-action");
+			if (isConfirmingDelete) {
+				deleteButton.buttonEl.addClass("is-confirming");
+			}
 		}
 	}
 
@@ -581,9 +634,7 @@ export class CardSidebarView extends ItemView {
 				return;
 			}
 
-			this.selectedInsertedCardIds.add(card.id);
 			void this.plugin.sidebar.revealCard(card);
-			this.render();
 		});
 
 		rowEl.addEventListener("keydown", (event) => {
@@ -596,9 +647,7 @@ export class CardSidebarView extends ItemView {
 			}
 
 			event.preventDefault();
-			this.selectedInsertedCardIds.add(card.id);
 			void this.plugin.sidebar.revealCard(card);
-			this.render();
 		});
 	}
 
@@ -635,15 +684,17 @@ export class CardSidebarView extends ItemView {
 		this.render();
 	}
 
-	private async handleDeleteSelectedCards(): Promise<void> {
-		const selectedCardIds = Array.from(this.selectedInsertedCardIds);
-		if (selectedCardIds.length === 0) {
+	private async handleDeleteCards(cardIds: string[]): Promise<void> {
+		if (cardIds.length === 0) {
 			return;
 		}
 
 		try {
-			await this.plugin.sidebar.deleteInsertedCards(selectedCardIds);
-			this.selectedInsertedCardIds.clear();
+			await this.plugin.sidebar.deleteInsertedCards(cardIds);
+			for (const cardId of cardIds) {
+				this.selectedInsertedCardIds.delete(cardId);
+			}
+			this.resetDeleteConfirmations();
 			this.render();
 		} catch {
 			// Notice is already shown by the controller.
@@ -708,6 +759,11 @@ export class CardSidebarView extends ItemView {
 		}
 
 		return values.some((value) => value.toLowerCase().includes(query));
+	}
+
+	private resetDeleteConfirmations(): void {
+		this.pendingSingleDeleteCardId = null;
+		this.isBulkDeleteConfirmationPending = false;
 	}
 
 	private createTextAreaField(
