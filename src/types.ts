@@ -3,7 +3,8 @@ import type { TFile } from "obsidian";
 export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
 export type ContentChunkKind = "selection" | "section";
 export type CardBlockKind = "selection" | "heading" | "preamble";
-export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind", "sectionKey"] as const;
+export const GENERATED_CARD_TYPE = "obcd";
+export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind"] as const;
 export type SidebarTableColumnId = (typeof SIDEBAR_TABLE_COLUMN_IDS)[number];
 
 export interface TextRange {
@@ -73,18 +74,6 @@ export interface ReviewResult {
 	approvedGroups: ApprovedCardGroup[];
 }
 
-export interface CardBlockMetadata {
-	sectionKey: string;
-	headingPath: string[];
-	sourceHash: string;
-	kind: CardBlockKind;
-}
-
-export interface ExistingCardBlock {
-	metadata: CardBlockMetadata;
-	range: TextRange;
-}
-
 export interface ExistingCardEntry {
 	id: string;
 	file: TFile;
@@ -94,18 +83,8 @@ export interface ExistingCardEntry {
 	front: string;
 	back: string;
 	tags: string[];
-	metadata: CardBlockMetadata;
-	titleHint: string;
-	indexInSection: number;
-}
-
-export type ReviewSessionStatus = "reviewing" | "submitting";
-
-export interface SidebarReviewSession {
-	file: TFile;
-	filePath: string;
-	groups: ReviewGroup[];
-	status: ReviewSessionStatus;
+	type: string;
+	targetLabel: string;
 }
 
 export type GenerationProgressPhase = "preparing" | "generating" | "reviewing" | "writing";

@@ -12,9 +12,9 @@ export const SIDEBAR_TABLE_COLUMNS: SidebarTableColumnDefinition[] = [
 	{
 		id: "target",
 		label: "Target",
-		description: "Show the heading path or selection target for each card.",
+		description: "Show the stored target label for each generated card.",
 		previewLength: 56,
-		getValue: (card) => getCardTargetLabel(card),
+		getValue: (card) => card.targetLabel,
 	},
 	{
 		id: "tags",
@@ -26,54 +26,21 @@ export const SIDEBAR_TABLE_COLUMNS: SidebarTableColumnDefinition[] = [
 	{
 		id: "kind",
 		label: "Type",
-		description: "Show the source block type from the card metadata.",
+		description: "Show the generated card type.",
 		previewLength: 18,
-		getValue: (card) => getCardKindLabel(card.metadata.kind),
-	},
-	{
-		id: "sectionKey",
-		label: "Section key",
-		description: "Show the internal section key stored on the card metadata.",
-		previewLength: 42,
-		getValue: (card) => card.metadata.sectionKey,
+		getValue: (card) => card.type.length > 0 ? card.type : "Card",
 	},
 ];
-
-export function getCardTargetLabel(card: ExistingCardEntry): string {
-	if (card.metadata.headingPath.length > 0) {
-		return card.metadata.headingPath.join(" > ");
-	}
-
-	if (card.metadata.kind === "selection") {
-		return "Selection";
-	}
-
-	return card.titleHint;
-}
 
 export function getSearchableCardValues(card: ExistingCardEntry): string[] {
 	return [
 		card.front,
-		getCardTargetLabel(card),
+		card.targetLabel,
 		card.tags.join(" "),
-		getCardKindLabel(card.metadata.kind),
-		card.metadata.sectionKey,
+		card.type,
 	];
 }
 
 export function findSidebarTableColumn(columnId: SidebarTableColumnId): SidebarTableColumnDefinition | undefined {
 	return SIDEBAR_TABLE_COLUMNS.find((column) => column.id === columnId);
-}
-
-function getCardKindLabel(kind: ExistingCardEntry["metadata"]["kind"]): string {
-	switch (kind) {
-		case "heading":
-			return "Heading";
-		case "preamble":
-			return "Preamble";
-		case "selection":
-			return "Selection";
-		default:
-			return kind;
-	}
 }

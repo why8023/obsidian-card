@@ -2,16 +2,10 @@ import type { TFile, Vault } from "obsidian";
 
 import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
-import type { ApprovedCardGroup, CardBlockMetadata, ExistingCardEntry, GeneratedBasicCard, TextRange } from "../types";
+import type { ApprovedCardGroup, ExistingCardEntry, GeneratedBasicCard, TextRange } from "../types";
+import { GENERATED_CARD_TYPE } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
-import {
-	collectGeneratedCardBlocks,
-	findGeneratedCardBlockInnerRange,
-	GENERATED_CARD_BLOCK_END_MARKER,
-} from "../utils/generatedCardBlocks";
 import { detectNewline } from "../utils/markdown";
-
-const CARD_START_MARKER = "<!-- card-start";
 
 export async function writeApprovedCardGroups(
 	vault: Vault,
@@ -27,7 +21,7 @@ export async function writeApprovedCardGroups(
 
 	let insertedCount = 0;
 	await vault.process(file, (content) => {
-		const result = upsertCardGroups(content, groups, options);
+		const result = insertCardGroups(content, groups, options);
 		insertedCount = result.insertedCount;
 		return result.content;
 	});
@@ -91,10 +85,13 @@ export async function restoreDeletedCards(
 
 export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): string {
 	const tags = sanitizeTags(card.tags);
-	const tagsAttribute = tags.length > 0 ? ` tags="${tags.join(",")}"` : "";
+	const attributes = [`type="${GENERATED_CARD_TYPE}"`];
+	if (tags.length > 0) {
+		attributes.push(`tags="${tags.join(",")}"`);
+	}
 
 	return [
-		`<!-- card-start${tagsAttribute} -->`,
+		`<!-- card-start ${attributes.join(" ")} -->`,
 		card.front.trim(),
 		"<!-- card-back -->",
 		card.back.trim(),
@@ -102,28 +99,7 @@ export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): strin
 	].join(newline);
 }
 
-export function renderCardBlock(metadata: CardBlockMetadata, cards: GeneratedBasicCard[], newline: string): string {
-	const serializedMetadata = JSON.stringify({
-		sectionKey: metadata.sectionKey,
-		headingPath: metadata.headingPath,
-		sourceHash: metadata.sourceHash,
-		kind: metadata.kind,
-	});
-	const parts = [`<!-- obcd-section:start ${serializedMetadata} -->`];
-
-	for (const [index, card] of cards.entries()) {
-		if (index > 0) {
-			parts.push("");
-		}
-
-		parts.push(renderBasicCard(card, newline));
-	}
-
-	parts.push(GENERATED_CARD_BLOCK_END_MARKER);
-	return parts.join(newline);
-}
-
-function upsertCardGroups(
+function insertCardGroups(
 	content: string,
 	groups: ApprovedCardGroup[],
 	options?: {
@@ -134,53 +110,18 @@ function upsertCardGroups(
 	const shouldUseObarWrapper = options?.obarCompatibility !== undefined
 		? isObarRecordContent(content, options.obarCompatibility)
 		: false;
-	const sortedGroups = [...groups].sort((left, right) => (
-		right.chunk.insertOffset - left.chunk.insertOffset || right.chunk.range.from - left.chunk.range.from
-	));
+	const sortedGroups = [...groups]
+		.filter((group) => group.cards.length > 0)
+		.sort((left, right) => (
+			right.chunk.insertOffset - left.chunk.insertOffset || right.chunk.range.from - left.chunk.range.from
+		));
 
 	let workingContent = content;
 	let insertedCount = 0;
 
 	for (const group of sortedGroups) {
-		const existingBlock = group.chunk.kind === "selection"
-			? undefined
-			: collectGeneratedCardBlocks(workingContent)
-				.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
-
-		if (group.cards.length === 0) {
-			if (existingBlock) {
-				const rangeToRemove = expandBlockRemovalRange(workingContent, existingBlock.range, newline);
-				workingContent = applyRangeReplacements(workingContent, [{
-					range: rangeToRemove,
-					value: "",
-				}]);
-			}
-
-			continue;
-		}
-
-		const block = renderCardBlock({
-			sectionKey: group.chunk.sectionKey,
-			headingPath: group.chunk.headingPath,
-			sourceHash: group.chunk.sourceHash,
-			kind: group.chunk.blockKind,
-		}, group.cards, newline);
-		const blockToWrite = shouldUseObarWrapper && options?.obarCompatibility
-			? renderObarWrappedBlock(block, newline)
-			: block;
-
+		const blockToWrite = renderInsertedCards(group.cards, newline, shouldUseObarWrapper);
 		insertedCount += group.cards.length;
-
-		if (group.chunk.kind === "selection") {
-			workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
-			continue;
-		}
-
-		if (existingBlock) {
-			workingContent = replaceBlockAt(workingContent, existingBlock.range, blockToWrite, newline);
-			continue;
-		}
-
 		workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
 	}
 
@@ -188,6 +129,15 @@ function upsertCardGroups(
 		content: workingContent,
 		insertedCount,
 	};
+}
+
+function renderInsertedCards(cards: GeneratedBasicCard[], newline: string, wrapEachCardWithObar: boolean): string {
+	return cards
+		.map((card) => {
+			const renderedCard = renderBasicCard(card, newline);
+			return wrapEachCardWithObar ? renderObarWrappedBlock(renderedCard, newline) : renderedCard;
+		})
+		.join(`${newline}${newline}`);
 }
 
 function insertBlockAt(content: string, offset: number, block: string, newline: string): string {
@@ -198,11 +148,6 @@ function insertBlockAt(content: string, offset: number, block: string, newline: 
 	const suffix = buildInsertSuffix(after, newline);
 
 	return `${before}${prefix}${block}${suffix}${after}`;
-}
-
-function replaceBlockAt(content: string, range: TextRange, block: string, newline: string): string {
-	const strippedContent = `${content.slice(0, range.from)}${content.slice(range.to)}`;
-	return insertBlockAt(strippedContent, range.from, block, newline);
 }
 
 function buildInsertPrefix(before: string, newline: string): string {
@@ -284,70 +229,35 @@ function removeExistingCardsFromContent(
 		};
 	}
 
-	const newline = detectNewline(content);
-	const replacements: Array<{ range: TextRange; value: string }> = [];
-
-	for (const block of groupEntriesByBlock(entries)) {
-		const remainingCards = block.cards.filter((entry) => !cardIds.has(entry.id));
-		if (remainingCards.length === block.cards.length) {
-			continue;
-		}
-
-		if (remainingCards.length === 0) {
-			replacements.push({
-				range: expandBlockRemovalRange(content, block.range, newline),
-				value: "",
-			});
-			continue;
-		}
-
-		replacements.push({
-			range: findGeneratedCardBlockInnerRange(content, block.range) ?? block.range,
-			value: renderCardBlock(
-				block.metadata,
-				remainingCards.map((entry) => ({
-					front: entry.front,
-					back: entry.back,
-					tags: entry.tags,
-				})),
-				newline,
-			),
-		});
-	}
+	const replacements = mergeRanges(
+		deletedEntries.map((entry) => entry.blockRange),
+	);
 
 	return {
-		content: cleanupEmptyGeneratedBlocks(applyRangeReplacements(content, replacements), newline),
+		content: applyRangeReplacements(content, replacements.map((range) => ({ range, value: "" }))),
 		deletedCount: deletedEntries.length,
 	};
 }
 
-function groupEntriesByBlock(entries: ExistingCardEntry[]): Array<{
-	range: TextRange;
-	metadata: CardBlockMetadata;
-	cards: ExistingCardEntry[];
-}> {
-	const groups = new Map<string, {
-		range: TextRange;
-		metadata: CardBlockMetadata;
-		cards: ExistingCardEntry[];
-	}>();
+function mergeRanges(ranges: TextRange[]): TextRange[] {
+	if (ranges.length === 0) {
+		return [];
+	}
 
-	for (const entry of entries) {
-		const groupKey = `${entry.blockRange.from}:${entry.blockRange.to}`;
-		const existingGroup = groups.get(groupKey);
-		if (existingGroup) {
-			existingGroup.cards.push(entry);
+	const sortedRanges = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
+	const mergedRanges: TextRange[] = [{ ...sortedRanges[0]! }];
+
+	for (const range of sortedRanges.slice(1)) {
+		const currentRange = mergedRanges[mergedRanges.length - 1]!;
+		if (range.from > currentRange.to) {
+			mergedRanges.push({ ...range });
 			continue;
 		}
 
-		groups.set(groupKey, {
-			range: entry.blockRange,
-			metadata: entry.metadata,
-			cards: [entry],
-		});
+		currentRange.to = Math.max(currentRange.to, range.to);
 	}
 
-	return Array.from(groups.values());
+	return mergedRanges;
 }
 
 function applyRangeReplacements(content: string, replacements: Array<{ range: TextRange; value: string }>): string {
@@ -357,60 +267,3 @@ function applyRangeReplacements(content: string, replacements: Array<{ range: Te
 			`${currentContent.slice(0, replacement.range.from)}${replacement.value}${currentContent.slice(replacement.range.to)}`
 		), content);
 }
-
-function cleanupEmptyGeneratedBlocks(content: string, newline: string): string {
-	const replacements = collectGeneratedCardBlocks(content)
-		.filter((block) => isGeneratedBlockEmpty(content, block.range))
-		.map((block) => ({
-			range: expandBlockRemovalRange(content, block.range, newline),
-			value: "",
-		}));
-
-	if (replacements.length === 0) {
-		return content;
-	}
-
-	return applyRangeReplacements(content, replacements);
-}
-
-function expandBlockRemovalRange(content: string, range: TextRange, newline: string): TextRange {
-	let from = range.from;
-	let to = range.to;
-	const remainingAfter = content.slice(to);
-
-	if (from === 0) {
-		while (content.slice(to, to + newline.length) === newline) {
-			to += newline.length;
-		}
-
-		return { from, to };
-	}
-
-	if (remainingAfter === newline) {
-		to += newline.length;
-	}
-
-	if (endsWithDoubleNewline(content.slice(0, from), newline)) {
-		from -= newline.length;
-	}
-
-	if (startsWithDoubleNewline(content.slice(to), newline)) {
-		to += newline.length;
-	}
-
-	return { from, to };
-}
-
-function isGeneratedBlockEmpty(content: string, outerRange: TextRange): boolean {
-	const innerRange = findGeneratedCardBlockInnerRange(content, outerRange) ?? outerRange;
-	return !content.slice(innerRange.from, innerRange.to).includes(CARD_START_MARKER);
-}
-
-function endsWithDoubleNewline(value: string, newline: string): boolean {
-	return value.endsWith(`${newline}${newline}`);
-}
-
-function startsWithDoubleNewline(value: string, newline: string): boolean {
-	return value.startsWith(`${newline}${newline}`);
-}
-

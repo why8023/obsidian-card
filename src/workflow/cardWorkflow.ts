@@ -267,9 +267,6 @@ export class FlashcardWorkflow {
 					detail: "No valid cards remained after final validation.",
 				});
 				new Notice(`No flashcards were inserted for ${file.basename}.`);
-				if (!isBatchMode) {
-					await this.plugin.sidebar.completePendingSessionAfterWrite(file);
-				}
 				const result = {
 					action: "confirm",
 					insertedCount: 0,
@@ -289,14 +286,9 @@ export class FlashcardWorkflow {
 				obarCompatibility: this.plugin.settings.compatibility.obar,
 			});
 			if (!isBatchMode) {
-				await this.plugin.sidebar.completePendingSessionAfterWrite(file);
+				await this.plugin.sidebar.refresh();
 			}
-			const updatedSectionCount = groupsToWrite.length;
-			const noticeParts = [
-				`Updated ${updatedSectionCount} section${updatedSectionCount === 1 ? "" : "s"} in ${file.basename}.`,
-				`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"}.`,
-			];
-			new Notice(noticeParts.join(" "));
+			new Notice(`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"} into ${file.basename}.`);
 			debugRun.recordWrite({
 				insertedCount,
 				approvedCount: approvedCardCount,
@@ -316,9 +308,6 @@ export class FlashcardWorkflow {
 			await debugRun.finish("inserted", result);
 			return result;
 		} catch (error) {
-			if (!isBatchMode) {
-				this.plugin.sidebar.resetPendingSessionAfterError(file);
-			}
 			debugRun.recordError("processSingleFile", error, {
 				filePath: file.path,
 				isBatchMode,

@@ -1,7 +1,7 @@
 import type { TFile } from "obsidian";
 
 import type { ContentChunk, TextRange } from "../types";
-import { collectGeneratedCardBlocks } from "../utils/generatedCardBlocks";
+import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import {
 	collectMarkdownHeadings,
 	findFrontmatterEnd,
@@ -42,17 +42,9 @@ export function buildSelectionChunks(file: TFile, selectedText: string, range: T
 export function buildFileChunks(file: TFile, content: string, options: BuildFileChunksOptions = {}): ContentChunk[] {
 	const contentStart = findFrontmatterEnd(content);
 	const headings = collectMarkdownHeadings(content).filter((heading) => heading.from >= contentStart);
-	const cardBlocks = collectGeneratedCardBlocks(content);
-	const blockRanges = cardBlocks.map((block) => block.range);
-	const coveredSections = new Map<string, string>();
-
-	for (const block of cardBlocks) {
-		if (block.metadata.kind === "selection") {
-			continue;
-		}
-
-		coveredSections.set(block.metadata.sectionKey, block.metadata.sourceHash);
-	}
+	const blockRanges = dedupeRanges(
+		collectExistingCardEntries(file, content).map((entry) => entry.blockRange),
+	);
 
 	const chunks: ContentChunk[] = [];
 
@@ -75,7 +67,6 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 			},
 			insertOffset: contentStart,
 			blockRanges,
-			coveredSections,
 		});
 		return filterChunksByOffset(chunks, options.upToOffset);
 	}
@@ -101,7 +92,6 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 			},
 			insertOffset: contentStart,
 			blockRanges,
-			coveredSections,
 		});
 	}
 
@@ -146,7 +136,6 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 			},
 			insertOffset: heading.lineEnd,
 			blockRanges,
-			coveredSections,
 		});
 	}
 
@@ -167,7 +156,6 @@ function addChunkIfNeeded(
 		bodyRange: TextRange;
 		insertOffset: number;
 		blockRanges: TextRange[];
-		coveredSections: Map<string, string>;
 	},
 ): void {
 	const rawText = sliceWithoutRanges(options.content, options.bodyRange.from, options.bodyRange.to, options.blockRanges);
@@ -177,10 +165,6 @@ function addChunkIfNeeded(
 	}
 
 	const sourceHash = hashContent(trimmedText);
-	if (options.coveredSections.get(options.sectionKey) === sourceHash) {
-		return;
-	}
-
 	chunks.push({
 		file: options.file,
 		filePath: options.file.path,
@@ -217,4 +201,21 @@ function containsMeaningfulText(value: string): boolean {
 		.replace(/^\s*>+\s?/gm, " ");
 
 	return /[\p{L}\p{N}]/u.test(normalizedValue);
+}
+
+function dedupeRanges(ranges: TextRange[]): TextRange[] {
+	const seenRanges = new Set<string>();
+	const results: TextRange[] = [];
+
+	for (const range of ranges) {
+		const rangeKey = `${range.from}:${range.to}`;
+		if (seenRanges.has(rangeKey)) {
+			continue;
+		}
+
+		seenRanges.add(rangeKey);
+		results.push(range);
+	}
+
+	return results;
 }

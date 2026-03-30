@@ -2,23 +2,17 @@ import {
 	ButtonComponent,
 	ItemView,
 	SearchComponent,
-	TextAreaComponent,
-	TextComponent,
 } from "obsidian";
 
 import type { WorkspaceLeaf } from "obsidian";
 
 import type ObcdPlugin from "../main";
 import type {
-	CardCandidate,
 	ExistingCardEntry,
-	ReviewGroup,
-	SidebarReviewSession,
 	SidebarTableColumnId,
 } from "../types";
 import { makePreview } from "../utils/markdown";
 import { OBCD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
-import { setAllReviewGroupsApproved, setReviewGroupApproved } from "./reviewState";
 import {
 	findSidebarTableColumn,
 	getSearchableCardValues,
@@ -26,13 +20,10 @@ import {
 	type SidebarTableColumnDefinition,
 } from "./sidebarTableColumns";
 
-type SidebarScope = "all" | "pending" | "inserted";
-
 export class CardSidebarView extends ItemView {
 	private readonly plugin: ObcdPlugin;
 	private unsubscribe: (() => void) | null = null;
 	private searchText = "";
-	private filterScope: SidebarScope = "all";
 	private actionsInitialized = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
@@ -85,56 +76,29 @@ export class CardSidebarView extends ItemView {
 		contentEl.empty();
 
 		const rootEl = contentEl.createDiv({ cls: "obcd-sidebar" });
-		const displayFile = state.displayFile;
-		this.syncInsertedSelection(displayFile?.path ?? null, state.existingCards);
+		const activeFile = state.activeFile;
+		this.syncInsertedSelection(activeFile?.path ?? null, state.existingCards);
 
 		if (state.generationProgress !== null) {
 			this.renderGenerationProgress(rootEl, state.generationProgress);
 		}
 
-		if (displayFile === null) {
+		if (activeFile === null) {
 			if (state.generationProgress === null) {
-				this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to start reviewing.");
+				this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to inspect inserted cards.");
 			}
 			return;
 		}
 
-		const pendingSession = state.pendingSession?.file.path === displayFile.path
-			? state.pendingSession
-			: null;
-
-		const pendingCandidateCount = pendingSession === null
-			? 0
-			: pendingSession.groups.reduce((sum, group) => sum + group.candidates.length, 0);
-		const approvedPendingCount = pendingSession === null
-			? 0
-			: pendingSession.groups.reduce((sum, group) => sum + group.candidates.filter((candidate) => candidate.approved).length, 0);
-
 		this.renderFileHeader(rootEl, {
-			name: displayFile.basename,
-			path: displayFile.path,
-			pendingCandidateCount,
-			approvedPendingCount,
+			name: activeFile.basename,
+			path: activeFile.path,
 			insertedCount: state.existingCards.length,
-			isDetachedFromActiveFile: pendingSession !== null && state.activeFile?.path !== displayFile.path,
-			activeFileName: state.activeFile?.basename ?? "",
-			activeFilePath: state.activeFile?.path ?? "",
-			canGenerateCurrentFile: state.activeFile !== null,
 			isGeneratingCurrentFile: state.generationProgress !== null,
 		});
 
-		this.renderFilterBar(rootEl);
-
-		const hasPendingScope = this.filterScope === "all" || this.filterScope === "pending";
-		const hasInsertedScope = this.filterScope === "all" || this.filterScope === "inserted";
-
-		if (pendingSession !== null && hasPendingScope) {
-			this.renderPendingSection(rootEl, pendingSession);
-		}
-
-		if (hasInsertedScope) {
-			this.renderInsertedSection(rootEl, state.existingCards, state);
-		}
+		this.renderSearchBar(rootEl);
+		this.renderInsertedSection(rootEl, state.existingCards, state);
 	}
 
 	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
@@ -213,13 +177,7 @@ export class CardSidebarView extends ItemView {
 		state: {
 			name: string;
 			path: string;
-			pendingCandidateCount: number;
-			approvedPendingCount: number;
 			insertedCount: number;
-			isDetachedFromActiveFile: boolean;
-			activeFileName: string;
-			activeFilePath: string;
-			canGenerateCurrentFile: boolean;
 			isGeneratingCurrentFile: boolean;
 		},
 	): void {
@@ -234,13 +192,6 @@ export class CardSidebarView extends ItemView {
 		});
 
 		const chipsEl = headerEl.createDiv({ cls: "obcd-sidebar-chips" });
-		if (state.pendingCandidateCount > 0) {
-			chipsEl.createEl("span", {
-				cls: "obcd-sidebar-chip",
-				text: `Awaiting insert ${state.approvedPendingCount}/${state.pendingCandidateCount}`,
-			});
-		}
-
 		chipsEl.createEl("span", {
 			cls: "obcd-sidebar-chip",
 			text: `Inserted ${state.insertedCount}`,
@@ -249,187 +200,24 @@ export class CardSidebarView extends ItemView {
 		const actionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
 		const generateButton = new ButtonComponent(actionsEl)
 			.setButtonText(state.isGeneratingCurrentFile ? "Generating current file..." : "Generate current file")
-			.setDisabled(!state.canGenerateCurrentFile || state.isGeneratingCurrentFile)
+			.setDisabled(state.isGeneratingCurrentFile)
 			.onClick(() => {
 				void this.plugin.workflow.generateForCurrentFile();
 			});
 		generateButton.setCta();
-		generateButton.buttonEl.setAttr(
-			"title",
-			state.canGenerateCurrentFile
-				? `Generate flashcards for ${state.activeFilePath}.`
-				: "Open a Markdown file to generate flashcards for the current file.",
-		);
-
-		if (state.isDetachedFromActiveFile && state.activeFileName.length > 0) {
-			headerEl.createEl("p", {
-				cls: "obcd-sidebar-note",
-				text: `Review stays pinned to this file. Current editor: ${state.activeFileName}.`,
-			});
-		} else if (!state.canGenerateCurrentFile) {
-			headerEl.createEl("p", {
-				cls: "obcd-sidebar-note",
-				text: "Open a Markdown file to generate flashcards for the current file.",
-			});
-		}
+		generateButton.buttonEl.setAttr("title", `Generate flashcards for ${state.path}.`);
 	}
 
-	private renderFilterBar(containerEl: HTMLElement): void {
+	private renderSearchBar(containerEl: HTMLElement): void {
 		const filterEl = containerEl.createDiv({ cls: "obcd-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
-		search.setPlaceholder("Filter question, target, or metadata");
+		search.setPlaceholder("Filter question, target, tags, or metadata");
 		search.setValue(this.searchText);
 		search.onChange((value) => {
 			this.searchText = value;
 			this.resetDeleteConfirmations();
 			this.render();
 		});
-
-		const scopeEl = filterEl.createDiv({ cls: "obcd-sidebar-scope" });
-		this.createScopeButton(scopeEl, "All", "all");
-		this.createScopeButton(scopeEl, "Awaiting", "pending");
-		this.createScopeButton(scopeEl, "Inserted", "inserted");
-	}
-
-	private createScopeButton(containerEl: HTMLElement, label: string, value: SidebarScope): void {
-		const button = new ButtonComponent(containerEl)
-			.setButtonText(label)
-			.onClick(() => {
-				this.filterScope = value;
-				this.resetDeleteConfirmations();
-				this.render();
-			});
-
-		button.buttonEl.addClass("obcd-sidebar-scope-button");
-		if (this.filterScope === value) {
-			button.buttonEl.addClass("is-active");
-		}
-	}
-
-	private renderPendingSection(containerEl: HTMLElement, session: SidebarReviewSession): void {
-		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
-		sectionEl.createEl("h4", {
-			cls: "obcd-sidebar-section-title",
-			text: "Awaiting insert",
-		});
-		sectionEl.createEl("p", {
-			cls: "obcd-sidebar-note",
-			text: "These cards are generated candidates. They are not written into the note until you confirm insert.",
-		});
-
-		const actionsEl = sectionEl.createDiv({ cls: "obcd-sidebar-actions" });
-		const isSubmitting = session.status === "submitting";
-		this.createActionButton(actionsEl, "Keep all", () => {
-			setAllReviewGroupsApproved(session.groups, true);
-			this.render();
-		}, { disabled: isSubmitting });
-		this.createActionButton(actionsEl, "Discard all", () => {
-			setAllReviewGroupsApproved(session.groups, false);
-			this.render();
-		}, { disabled: isSubmitting });
-		this.createActionButton(actionsEl, "Cancel", () => {
-			this.plugin.sidebar.cancelPendingReview();
-		}, { disabled: isSubmitting });
-		this.createActionButton(actionsEl, "Confirm insert", () => {
-			this.plugin.sidebar.requestConfirmPendingReview();
-		}, { cta: true, disabled: isSubmitting });
-
-		if (isSubmitting) {
-			sectionEl.createEl("p", {
-				cls: "obcd-sidebar-note",
-				text: "Writing approved cards into the note...",
-			});
-		}
-
-		const listEl = sectionEl.createDiv({ cls: "obcd-sidebar-group-list" });
-		const filteredGroups = this.getFilteredPendingGroups(session.groups);
-
-		if (filteredGroups.length === 0) {
-			this.renderEmptyState(listEl, "No awaiting cards match the current filter.");
-			return;
-		}
-
-		for (const group of filteredGroups) {
-			this.renderPendingGroup(listEl, group, isSubmitting);
-		}
-	}
-
-	private renderPendingGroup(
-		containerEl: HTMLElement,
-		group: {
-			group: ReviewGroup;
-			candidates: CardCandidate[];
-		},
-		isSubmitting: boolean,
-	): void {
-		const groupEl = containerEl.createDiv({ cls: "obcd-sidebar-card" });
-		const headerEl = groupEl.createDiv({ cls: "obcd-sidebar-card-header" });
-		const headingEl = headerEl.createDiv({ cls: "obcd-sidebar-card-heading" });
-		headingEl.createEl("strong", {
-			text: group.group.chunk.titleHint ?? group.group.chunk.file.basename,
-		});
-		headingEl.createEl("span", {
-			cls: "obcd-sidebar-chip",
-			text: `${group.candidates.filter((candidate) => candidate.approved).length}/${group.candidates.length}`,
-		});
-
-		if (group.group.chunk.headingPath.length > 1) {
-			groupEl.createEl("p", {
-				cls: "obcd-sidebar-subtle",
-				text: group.group.chunk.headingPath.join(" > "),
-			});
-		}
-
-		const groupActionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
-		this.createActionButton(groupActionsEl, "Keep section", () => {
-			setReviewGroupApproved([group.group], group.group.chunk.sectionKey, true);
-			this.render();
-		}, { disabled: isSubmitting });
-		this.createActionButton(groupActionsEl, "Discard section", () => {
-			setReviewGroupApproved([group.group], group.group.chunk.sectionKey, false);
-			this.render();
-		}, { disabled: isSubmitting });
-
-		const previewDetails = groupEl.createEl("details", { cls: "obcd-sidebar-preview" });
-		previewDetails.createEl("summary", {
-			text: "Source preview",
-		});
-		previewDetails.createEl("div", {
-			cls: "obcd-sidebar-preview-body",
-			text: group.group.sourcePreview,
-		});
-
-		for (const candidate of group.candidates) {
-			const cardEl = groupEl.createDiv({ cls: "obcd-sidebar-field" });
-			const cardHeaderEl = cardEl.createDiv({ cls: "obcd-sidebar-card-header" });
-			const checkboxEl = cardHeaderEl.createEl("input", {
-				attr: {
-					type: "checkbox",
-				},
-			});
-			checkboxEl.checked = candidate.approved;
-			checkboxEl.disabled = isSubmitting;
-			checkboxEl.addEventListener("change", () => {
-				candidate.approved = checkboxEl.checked;
-			});
-
-			cardHeaderEl.createEl("strong", {
-				text: "Card",
-			});
-
-			this.createTextAreaField(cardEl, "Front", candidate.card.front, 3, isSubmitting, (value) => {
-				candidate.card.front = value;
-			});
-			this.createTextAreaField(cardEl, "Back", candidate.card.back, 4, isSubmitting, (value) => {
-				candidate.card.back = value;
-			});
-			this.createTextField(cardEl, "Tags", candidate.card.tags.join(", "), isSubmitting, (value) => {
-				candidate.card.tags = value
-					.split(",")
-					.map((tag) => tag.trim())
-					.filter((tag) => tag.length > 0);
-			});
-		}
 	}
 
 	private renderInsertedSection(
@@ -736,39 +524,7 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
-	private getFilteredPendingGroups(groups: ReviewGroup[]): Array<{ group: ReviewGroup; candidates: CardCandidate[] }> {
-		const results: Array<{ group: ReviewGroup; candidates: CardCandidate[] }> = [];
-
-		for (const group of groups) {
-			const groupMatches = this.matchesText([
-				group.chunk.titleHint ?? "",
-				group.chunk.headingPath.join(" > "),
-				group.sourcePreview,
-			]);
-
-			const candidates = groupMatches
-				? group.candidates
-				: group.candidates.filter((candidate) => this.matchesText([
-					candidate.card.front,
-					candidate.card.back,
-					candidate.card.tags.join(" "),
-					candidate.sourcePreview,
-				]));
-
-			if (candidates.length === 0) {
-				continue;
-			}
-
-			results.push({
-				group,
-				candidates,
-			});
-		}
-
-		return results;
-	}
-
-	private getVisibleInsertedColumns() {
+	private getVisibleInsertedColumns(): SidebarTableColumnDefinition[] {
 		return this.plugin.settings.sidebar.visibleTableColumns
 			.map((columnId) => findSidebarTableColumn(columnId))
 			.filter((column): column is SidebarTableColumnDefinition => column !== undefined);
@@ -790,51 +546,6 @@ export class CardSidebarView extends ItemView {
 	private resetDeleteConfirmations(): void {
 		this.pendingSingleDeleteCardId = null;
 		this.isBulkDeleteConfirmationPending = false;
-	}
-
-	private createTextAreaField(
-		containerEl: HTMLElement,
-		label: string,
-		value: string,
-		rows: number,
-		disabled: boolean,
-		onChange: (value: string) => void,
-	): void {
-		const fieldEl = containerEl.createDiv({ cls: "obcd-sidebar-field" });
-		fieldEl.createEl("label", {
-			cls: "obcd-sidebar-label",
-			text: label,
-		});
-
-		const textArea = new TextAreaComponent(fieldEl);
-		textArea.inputEl.rows = rows;
-		textArea.inputEl.addClass("obcd-sidebar-textarea");
-		textArea.setDisabled(disabled);
-		textArea
-			.setValue(value)
-			.onChange(onChange);
-	}
-
-	private createTextField(
-		containerEl: HTMLElement,
-		label: string,
-		value: string,
-		disabled: boolean,
-		onChange: (value: string) => void,
-	): void {
-		const fieldEl = containerEl.createDiv({ cls: "obcd-sidebar-field" });
-		fieldEl.createEl("label", {
-			cls: "obcd-sidebar-label",
-			text: label,
-		});
-
-		const text = new TextComponent(fieldEl);
-		text.inputEl.addClass("obcd-sidebar-input");
-		text.setDisabled(disabled);
-		text
-			.setValue(value)
-			.setPlaceholder("Enter tags")
-			.onChange(onChange);
 	}
 
 	private createActionButton(
@@ -880,4 +591,3 @@ export class CardSidebarView extends ItemView {
 		});
 	}
 }
-
