@@ -2,8 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 
 const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const versions = JSON.parse(readFileSync("versions.json", "utf8"));
-const rawReleaseTag = process.env.GITHUB_REF_NAME ?? process.argv[2] ?? manifest.version;
-const releaseTag = rawReleaseTag.replace(/^refs\/tags\//, "").trim();
+
+function resolveReleaseTag() {
+	const explicitTag = process.argv[2]?.trim();
+	if (explicitTag) {
+		return explicitTag;
+	}
+
+	const githubRef = process.env.GITHUB_REF?.trim() ?? "";
+	if (githubRef.startsWith("refs/tags/")) {
+		return githubRef.slice("refs/tags/".length);
+	}
+
+	if (process.env.GITHUB_REF_TYPE === "tag") {
+		return process.env.GITHUB_REF_NAME?.trim() ?? "";
+	}
+
+	return manifest.version;
+}
+
+const releaseTag = resolveReleaseTag().replace(/^refs\/tags\//, "").trim();
 const semverMatch = /^v?(\d+\.\d+\.\d+)$/.exec(releaseTag);
 
 if (!semverMatch) {
