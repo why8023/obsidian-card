@@ -7,6 +7,7 @@ import { AiCardGenerator } from "../generation/cardGenerator";
 import { buildReviewGroups } from "../generation/cardValidator";
 import { buildFileChunks, buildSelectionChunks } from "../generation/contentChunkBuilder";
 import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
+import { resolveGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
 import type {
 	ApprovedCardGroup,
@@ -210,7 +211,8 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const chunkResults = await this.generateChunkResults(chunks, debugRun, file, mode, progressContext);
+			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
+			const chunkResults = await this.generateChunkResults(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
 			const reviewGroups = buildReviewGroups(chunkResults);
 			debugRun.recordCandidates(reviewGroups.flatMap((group) => group.candidates));
 
@@ -339,12 +341,13 @@ export class FlashcardWorkflow {
 
 	private async generateChunkResults(
 		chunks: ContentChunk[],
+		generationPrompt: string,
 		debugRun: ReturnType<ObsidianCardPlugin["debug"]["createRun"]>,
 		file: TFile,
 		mode: GenerationMode,
 		progressContext: GenerationProgressContext,
 	): Promise<ChunkGenerationResult[]> {
-		const generator = new AiCardGenerator(this.plugin.settings, debugRun);
+		const generator = new AiCardGenerator(this.plugin.settings, generationPrompt, debugRun);
 		const results: ChunkGenerationResult[] = [];
 		const chunkErrors: string[] = [];
 

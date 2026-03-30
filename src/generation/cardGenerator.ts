@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 
 import type { DebugRun } from "../debug/debugService";
+import { buildFlashcardOutputConstraintPrompt, DEFAULT_FLASHCARD_PROMPT } from "../prompts/promptDefaults";
 import type { ObsidianCardSettings } from "../settings";
 import type { ContentChunk, GeneratedBasicCard } from "../types";
 import { getActiveProvider, getProviderChatCompletionsUrl, getProviderHeaders } from "../providerConfig";
@@ -17,11 +18,13 @@ interface ChatCompletionResponse {
 }
 
 export class AiCardGenerator {
-	settings: ObsidianCardSettings;
+	private readonly settings: ObsidianCardSettings;
+	private readonly generationPrompt: string;
 	private readonly debugRun?: DebugRun;
 
-	constructor(settings: ObsidianCardSettings, debugRun?: DebugRun) {
+	constructor(settings: ObsidianCardSettings, generationPrompt: string, debugRun?: DebugRun) {
 		this.settings = settings;
+		this.generationPrompt = generationPrompt.trim().length > 0 ? generationPrompt : DEFAULT_FLASHCARD_PROMPT;
 		this.debugRun = debugRun;
 	}
 
@@ -33,7 +36,11 @@ export class AiCardGenerator {
 			messages: [
 				{
 					role: "system",
-					content: buildSystemPrompt(this.settings.generation.maxCardsPerChunk),
+					content: this.generationPrompt,
+				},
+				{
+					role: "system",
+					content: buildFlashcardOutputConstraintPrompt(this.settings.generation.maxCardsPerChunk),
 				},
 				{
 					role: "user",
@@ -83,23 +90,6 @@ export class AiCardGenerator {
 		this.debugRun?.recordChunkCards(chunkIndex, cards);
 		return cards;
 	}
-}
-
-function buildSystemPrompt(maxCardsPerChunk: number): string {
-	return [
-		"You generate concise BASIC flashcards from markdown note sections.",
-		`Return only a JSON array with at most ${maxCardsPerChunk} items.`,
-		"Each item must be an object with exactly these keys: front, back, tags.",
-		"Generate cards only for meaningful, memorizable knowledge from the section body.",
-		"Choose the card count based on content density. Returning [] is correct when the section is not worth turning into flashcards.",
-		"front must be a clear question.",
-		"back must be a short answer suitable for memorization.",
-		"tags must be an array of short strings and may be empty.",
-		"Use the same language as the source text.",
-		"Avoid copying long passages verbatim.",
-		"Do not include deck, id, card-start, card-back, card-end, markdown fences, or commentary.",
-		"If the text does not support useful flashcards, return [].",
-	].join(" ");
 }
 
 function parseGeneratedCards(response: ChatCompletionResponse | GeneratedBasicCard[] | Record<string, unknown>): GeneratedBasicCard[] {
