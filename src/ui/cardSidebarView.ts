@@ -407,10 +407,9 @@ export class CardSidebarView extends ItemView {
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
-		const isSelectionMode = selectedCount > 0;
 		const actionsEl = headerEl.createDiv({ cls: "obcard-sidebar-actions" });
 
-		if (isSelectionMode) {
+		if (selectedCount > 0) {
 			this.createActionButton(actionsEl, "Select all visible", () => {
 				for (const card of filteredCards) {
 					this.selectedInsertedCardIds.add(card.id);
@@ -437,8 +436,8 @@ export class CardSidebarView extends ItemView {
 		sectionEl.createEl("p", {
 			cls: "obcard-sidebar-note",
 			text: selectedCount > 0
-				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected for bulk actions.`
-				: "Click any card row to start multi-select.",
+				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected. Click a card row to locate it in the note.`
+				: "Click a card row to locate it in the note. Select checkboxes to show bulk actions.",
 		});
 
 		if (filteredCards.length === 0) {
@@ -446,7 +445,7 @@ export class CardSidebarView extends ItemView {
 			return;
 		}
 
-		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating, isSelectionMode);
+		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating);
 	}
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
@@ -487,7 +486,6 @@ export class CardSidebarView extends ItemView {
 		containerEl: HTMLElement,
 		cards: ExistingCardEntry[],
 		isMutating: boolean,
-		isSelectionMode: boolean,
 	): void {
 		const visibleColumns = this.getVisibleInsertedColumns();
 		const tableWrapperEl = containerEl.createDiv({ cls: "obcard-sidebar-table-wrapper" });
@@ -495,32 +493,30 @@ export class CardSidebarView extends ItemView {
 		const tableHeadEl = tableEl.createEl("thead");
 		const headerRowEl = tableHeadEl.createEl("tr");
 
-		if (isSelectionMode) {
-			const selectAllCell = headerRowEl.createEl("th", { cls: "obcard-sidebar-table-select-cell" });
-			const selectAllCheckbox = selectAllCell.createEl("input", {
-				attr: {
-					type: "checkbox",
-					"aria-label": "Select all visible cards",
-				},
-			});
-			const visibleCardIds = cards.map((card) => card.id);
-			const selectedVisibleCount = visibleCardIds.filter((cardId) => this.selectedInsertedCardIds.has(cardId)).length;
-			selectAllCheckbox.checked = selectedVisibleCount > 0 && selectedVisibleCount === visibleCardIds.length;
-			selectAllCheckbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCardIds.length;
-			selectAllCheckbox.disabled = isMutating || visibleCardIds.length === 0;
-			selectAllCheckbox.addEventListener("change", () => {
-				if (selectAllCheckbox.checked) {
-					for (const cardId of visibleCardIds) {
-						this.selectedInsertedCardIds.add(cardId);
-					}
-				} else {
-					for (const cardId of visibleCardIds) {
-						this.selectedInsertedCardIds.delete(cardId);
-					}
+		const selectAllCell = headerRowEl.createEl("th", { cls: "obcard-sidebar-table-select-cell" });
+		const selectAllCheckbox = selectAllCell.createEl("input", {
+			attr: {
+				type: "checkbox",
+				"aria-label": "Select all visible cards",
+			},
+		});
+		const visibleCardIds = cards.map((card) => card.id);
+		const selectedVisibleCount = visibleCardIds.filter((cardId) => this.selectedInsertedCardIds.has(cardId)).length;
+		selectAllCheckbox.checked = selectedVisibleCount > 0 && selectedVisibleCount === visibleCardIds.length;
+		selectAllCheckbox.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCardIds.length;
+		selectAllCheckbox.disabled = isMutating || visibleCardIds.length === 0;
+		selectAllCheckbox.addEventListener("change", () => {
+			if (selectAllCheckbox.checked) {
+				for (const cardId of visibleCardIds) {
+					this.selectedInsertedCardIds.add(cardId);
 				}
-				this.render();
-			});
-		}
+			} else {
+				for (const cardId of visibleCardIds) {
+					this.selectedInsertedCardIds.delete(cardId);
+				}
+			}
+			this.render();
+		});
 
 		headerRowEl.createEl("th", {
 			text: "Question",
@@ -532,11 +528,6 @@ export class CardSidebarView extends ItemView {
 			});
 		}
 
-		headerRowEl.createEl("th", {
-			cls: "obcard-sidebar-table-action-header",
-			text: "Action",
-		});
-
 		const tableBodyEl = tableEl.createEl("tbody");
 		for (const card of cards) {
 			const rowEl = tableBodyEl.createEl("tr", { cls: "obcard-sidebar-table-row" });
@@ -546,27 +537,25 @@ export class CardSidebarView extends ItemView {
 			if (this.selectedInsertedCardIds.has(card.id)) {
 				rowEl.addClass("is-selected");
 			}
-			this.bindInsertedRowSelection(rowEl, card.id, isMutating);
+			this.bindInsertedRowInteraction(rowEl, card, isMutating);
 
-			if (isSelectionMode) {
-				const selectionCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-select-cell" });
-				const checkboxEl = selectionCell.createEl("input", {
-					attr: {
-						type: "checkbox",
-						"aria-label": `Select ${card.front}`,
-					},
-				});
-				checkboxEl.checked = this.selectedInsertedCardIds.has(card.id);
-				checkboxEl.disabled = isMutating;
-				checkboxEl.addEventListener("change", () => {
-					if (checkboxEl.checked) {
-						this.selectedInsertedCardIds.add(card.id);
-					} else {
-						this.selectedInsertedCardIds.delete(card.id);
-					}
-					this.render();
-				});
-			}
+			const selectionCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-select-cell" });
+			const checkboxEl = selectionCell.createEl("input", {
+				attr: {
+					type: "checkbox",
+					"aria-label": `Select ${card.front}`,
+				},
+			});
+			checkboxEl.checked = this.selectedInsertedCardIds.has(card.id);
+			checkboxEl.disabled = isMutating;
+			checkboxEl.addEventListener("change", () => {
+				if (checkboxEl.checked) {
+					this.selectedInsertedCardIds.add(card.id);
+				} else {
+					this.selectedInsertedCardIds.delete(card.id);
+				}
+				this.render();
+			});
 
 			this.createInsertedTableCell(
 				rowEl,
@@ -583,25 +572,17 @@ export class CardSidebarView extends ItemView {
 					rawValue,
 				);
 			}
-
-			const actionsCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-actions" });
-			const locateButton = new ButtonComponent(actionsCell)
-				.setButtonText("Locate")
-				.setDisabled(isMutating)
-				.onClick(() => {
-					void this.plugin.sidebar.revealCard(card);
-				});
-			locateButton.buttonEl.addClass("obcard-sidebar-table-action");
 		}
 	}
 
-	private bindInsertedRowSelection(rowEl: HTMLTableRowElement, cardId: string, isMutating: boolean): void {
+	private bindInsertedRowInteraction(rowEl: HTMLTableRowElement, card: ExistingCardEntry, isMutating: boolean): void {
 		rowEl.addEventListener("click", (event) => {
 			if (isMutating || this.isInteractiveEventTarget(event.target)) {
 				return;
 			}
 
-			this.toggleInsertedCardSelection(cardId);
+			this.selectedInsertedCardIds.add(card.id);
+			void this.plugin.sidebar.revealCard(card);
 			this.render();
 		});
 
@@ -615,18 +596,10 @@ export class CardSidebarView extends ItemView {
 			}
 
 			event.preventDefault();
-			this.toggleInsertedCardSelection(cardId);
+			this.selectedInsertedCardIds.add(card.id);
+			void this.plugin.sidebar.revealCard(card);
 			this.render();
 		});
-	}
-
-	private toggleInsertedCardSelection(cardId: string): void {
-		if (this.selectedInsertedCardIds.has(cardId)) {
-			this.selectedInsertedCardIds.delete(cardId);
-			return;
-		}
-
-		this.selectedInsertedCardIds.add(cardId);
 	}
 
 	private createInsertedTableCell(
@@ -810,7 +783,7 @@ export class CardSidebarView extends ItemView {
 			case "generating":
 				return "Generating";
 			case "reviewing":
-				return "Awaiting review";
+				return "Preparing cards";
 			case "writing":
 				return "Writing";
 			default:

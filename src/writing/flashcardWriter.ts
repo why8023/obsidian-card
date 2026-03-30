@@ -7,6 +7,7 @@ import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { collectObsidianCardBlocks, detectNewline } from "../utils/markdown";
 
 const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
+const CARD_START_MARKER = "<!-- card-start";
 
 export async function writeApprovedCardGroups(
 	vault: Vault,
@@ -137,6 +138,23 @@ function upsertCardGroups(
 	let insertedCount = 0;
 
 	for (const group of sortedGroups) {
+		const existingBlock = group.chunk.kind === "selection"
+			? undefined
+			: collectObsidianCardBlocks(workingContent)
+				.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
+
+		if (group.cards.length === 0) {
+			if (existingBlock) {
+				const rangeToRemove = expandBlockRemovalRange(workingContent, existingBlock.range, newline);
+				workingContent = applyRangeReplacements(workingContent, [{
+					range: rangeToRemove,
+					value: "",
+				}]);
+			}
+
+			continue;
+		}
+
 		const block = renderCardBlock({
 			sectionKey: group.chunk.sectionKey,
 			headingPath: group.chunk.headingPath,
@@ -153,9 +171,6 @@ function upsertCardGroups(
 			workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
 			continue;
 		}
-
-		const existingBlock = collectObsidianCardBlocks(workingContent)
-			.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
 
 		if (existingBlock) {
 			workingContent = replaceBlockAt(workingContent, existingBlock.range, blockToWrite, newline);
@@ -297,7 +312,7 @@ function removeExistingCardsFromContent(
 	}
 
 	return {
-		content: applyRangeReplacements(content, replacements),
+		content: cleanupEmptyGeneratedBlocks(applyRangeReplacements(content, replacements), newline),
 		deletedCount: deletedEntries.length,
 	};
 }
@@ -339,6 +354,21 @@ function applyRangeReplacements(content: string, replacements: Array<{ range: Te
 		), content);
 }
 
+function cleanupEmptyGeneratedBlocks(content: string, newline: string): string {
+	const replacements = collectObsidianCardBlocks(content)
+		.filter((block) => isGeneratedBlockEmpty(content, block.range))
+		.map((block) => ({
+			range: expandBlockRemovalRange(content, block.range, newline),
+			value: "",
+		}));
+
+	if (replacements.length === 0) {
+		return content;
+	}
+
+	return applyRangeReplacements(content, replacements);
+}
+
 function expandBlockRemovalRange(content: string, range: TextRange, newline: string): TextRange {
 	let from = range.from;
 	let to = range.to;
@@ -365,6 +395,11 @@ function expandBlockRemovalRange(content: string, range: TextRange, newline: str
 	}
 
 	return { from, to };
+}
+
+function isGeneratedBlockEmpty(content: string, outerRange: TextRange): boolean {
+	const innerRange = findInnerCardBlockRange(content, outerRange) ?? outerRange;
+	return !content.slice(innerRange.from, innerRange.to).includes(CARD_START_MARKER);
 }
 
 function endsWithDoubleNewline(value: string, newline: string): boolean {

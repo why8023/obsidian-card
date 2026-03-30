@@ -356,20 +356,18 @@
 }
 
 .obcard-sidebar-table-select-cell {
-	width: 34px;
+	width: 42px;
 	text-align: center;
 }
 
-.obcard-sidebar-table-question {
-	width: 42%;
-	font-weight: 600;
-	color: var(--text-normal);
+.obcard-sidebar-table-select-cell input {
+	margin: 0;
 }
 
-.obcard-sidebar-table-action-header,
-.obcard-sidebar-table-actions {
-	width: 88px;
-	text-align: right;
+.obcard-sidebar-table-question {
+	width: 48%;
+	font-weight: 600;
+	color: var(--text-normal);
 }
 
 .obcard-sidebar-table-text {
@@ -377,9 +375,4 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.obcard-sidebar-table-action {
-	width: 100%;
-	justify-content: center;
 }

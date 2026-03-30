@@ -19,7 +19,6 @@ import type {
 	ReviewAction,
 	ReviewResult,
 } from "../types";
-import { ReviewModal } from "../ui/reviewModal";
 import { writeApprovedCardGroups } from "../writing/flashcardWriter";
 
 interface FileProcessResult {
@@ -152,7 +151,7 @@ export class FlashcardWorkflow {
 			const summaryParts = [
 				`Folder run finished for ${folder.path}.`,
 				`${insertedCount} card${insertedCount === 1 ? "" : "s"} inserted.`,
-				`${processedFiles} file${processedFiles === 1 ? "" : "s"} reviewed.`,
+				`${processedFiles} file${processedFiles === 1 ? "" : "s"} processed.`,
 			];
 
 			if (skippedFiles > 0) {
@@ -238,30 +237,22 @@ export class FlashcardWorkflow {
 				currentChunkIndex: chunks.length,
 				totalChunks: chunks.length,
 				fileProgress: 0.82,
-				detail: isBatchMode
-					? "Review the generated cards in the dialog to continue."
-					: "Review the generated cards in the sidebar to continue.",
+				detail: "Preparing generated cards for insertion.",
 			});
-			const reviewResult = isBatchMode
-				? await new ReviewModal(this.plugin.app, {
-					filePath: file.path,
-					groups: reviewGroups,
-					isBatchMode,
-				}).openAndWait()
-				: await this.plugin.sidebar.openReviewSession({
-					file,
-					groups: reviewGroups,
-				});
+			const reviewResult: ReviewResult = {
+				action: "confirm",
+				approvedGroups: reviewGroups.map((group) => ({
+					chunk: group.chunk,
+					cards: group.candidates
+						.filter((candidate) => candidate.approved)
+						.map((candidate) => ({
+							front: candidate.card.front,
+							back: candidate.card.back,
+							tags: [...candidate.card.tags],
+						})),
+				})),
+			};
 			debugRun.recordReview(reviewResult);
-
-			if (reviewResult.action !== "confirm") {
-				const result = {
-					action: reviewResult.action,
-					insertedCount: 0,
-				} satisfies FileProcessResult;
-				await debugRun.finish(`review-${reviewResult.action}`, result);
-				return result;
-			}
 
 			const groupsToWrite = this.buildGroupsToWrite(chunkResults, reviewResult, mode);
 			const approvedCardCount = groupsToWrite.reduce((sum, group) => sum + group.cards.length, 0);
@@ -272,9 +263,9 @@ export class FlashcardWorkflow {
 					currentChunkIndex: chunks.length,
 					totalChunks: chunks.length,
 					fileProgress: 1,
-					detail: "No cards were kept from the generated result.",
+					detail: "No valid cards remained after final validation.",
 				});
-				new Notice(`No flashcards were kept for ${file.basename}.`);
+				new Notice(`No flashcards were inserted for ${file.basename}.`);
 				if (!isBatchMode) {
 					await this.plugin.sidebar.completePendingSessionAfterWrite(file);
 				}
@@ -291,7 +282,7 @@ export class FlashcardWorkflow {
 				currentChunkIndex: chunks.length,
 				totalChunks: chunks.length,
 				fileProgress: 0.94,
-				detail: "Writing approved cards into the note.",
+				detail: "Writing generated cards into the note.",
 			});
 			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite, {
 				obarCompatibility: this.plugin.settings.compatibility.obar,
