@@ -2,13 +2,17 @@ import { existsSync, readFileSync } from "node:fs";
 
 const manifest = JSON.parse(readFileSync("manifest.json", "utf8"));
 const versions = JSON.parse(readFileSync("versions.json", "utf8"));
-const releaseTag = process.env.GITHUB_REF_NAME ?? process.argv[2] ?? manifest.version;
+const rawReleaseTag = process.env.GITHUB_REF_NAME ?? process.argv[2] ?? manifest.version;
+const releaseTag = rawReleaseTag.replace(/^refs\/tags\//, "").trim();
+const semverMatch = /^v?(\d+\.\d+\.\d+)$/.exec(releaseTag);
 
-if (!/^\d+\.\d+\.\d+$/.test(releaseTag)) {
-	throw new Error(`Release tag must be plain SemVer without a leading "v": ${releaseTag}`);
+if (!semverMatch) {
+	throw new Error(`Release tag must be SemVer, optionally prefixed with "v": ${releaseTag}`);
 }
 
-if (manifest.version !== releaseTag) {
+const normalizedReleaseTag = semverMatch[1];
+
+if (manifest.version !== normalizedReleaseTag) {
 	throw new Error(`manifest.json version ${manifest.version} does not match release tag ${releaseTag}.`);
 }
 
