@@ -4,8 +4,6 @@ import { getDebugArtifactsDirectory } from "./debug/debugService";
 import type ObsidianCardPlugin from "./main";
 import {
 	DEFAULT_OBAR_FRONTMATTER_KEYS,
-	DEFAULT_OBAR_NOTE_HEADING_LEVEL,
-	DEFAULT_OBAR_NOTE_HEADING_TEXT,
 	normalizeObarFrontmatterKeys,
 } from "./obarCompatibility";
 import {
@@ -21,7 +19,7 @@ import {
 } from "./providerConfig";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 4;
+const SETTINGS_SCHEMA_VERSION = 5;
 
 export interface FlashcardGenerationSettings {
 	model: string;
@@ -41,8 +39,6 @@ export interface ObsidianCardSidebarSettings {
 export interface ObsidianCardObarCompatibilitySettings {
 	enabled: boolean;
 	frontmatterKeys: string[];
-	noteHeadingLevel: number;
-	noteHeadingText: string;
 }
 
 export interface ObsidianCardCompatibilitySettings {
@@ -82,8 +78,6 @@ export const DEFAULT_COMPATIBILITY_SETTINGS: ObsidianCardCompatibilitySettings =
 	obar: {
 		enabled: false,
 		frontmatterKeys: [...DEFAULT_OBAR_FRONTMATTER_KEYS],
-		noteHeadingLevel: DEFAULT_OBAR_NOTE_HEADING_LEVEL,
-		noteHeadingText: DEFAULT_OBAR_NOTE_HEADING_TEXT,
 	},
 };
 
@@ -315,31 +309,6 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
-			.setName("Obar note heading level")
-			.setDesc("Heading level inserted before the flashcard block inside an obar custom note. Range: 1 to 6.")
-			.addText((text) => text
-				.setPlaceholder(String(DEFAULT_OBAR_NOTE_HEADING_LEVEL))
-				.setValue(String(this.plugin.settings.compatibility.obar.noteHeadingLevel))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue >= 1 && parsedValue <= 6) {
-						this.plugin.settings.compatibility.obar.noteHeadingLevel = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("Obar note heading text")
-			.setDesc("Heading inserted inside the obar custom note before the flashcard block.")
-			.addText((text) => text
-				.setPlaceholder(DEFAULT_OBAR_NOTE_HEADING_TEXT)
-				.setValue(this.plugin.settings.compatibility.obar.noteHeadingText)
-				.onChange(async (value) => {
-					this.plugin.settings.compatibility.obar.noteHeadingText = value.trim();
-					await this.plugin.saveSettings();
-				}));
-
 		const debugArtifactsDirectory = getDebugArtifactsDirectory(
 			this.plugin.app.vault.configDir,
 			this.plugin.manifest.dir,
@@ -505,8 +474,6 @@ function parseCompatibilitySettings(value: unknown, fallback: ObsidianCardCompat
 		obar: {
 			enabled: readBoolean(obarSource.enabled, fallback.obar.enabled),
 			frontmatterKeys: normalizeObarFrontmatterKeys(obarSource.frontmatterKeys, fallback.obar.frontmatterKeys),
-			noteHeadingLevel: readNumber(obarSource.noteHeadingLevel, fallback.obar.noteHeadingLevel, { min: 1, max: 6 }),
-			noteHeadingText: readString(obarSource.noteHeadingText, fallback.obar.noteHeadingText),
 		},
 	};
 }

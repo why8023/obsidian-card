@@ -107,3 +107,19 @@ export interface SidebarReviewSession {
 	groups: ReviewGroup[];
 	status: ReviewSessionStatus;
 }
+
+export type GenerationProgressPhase = "preparing" | "generating" | "reviewing" | "writing";
+
+export interface GenerationProgressState {
+	phase: GenerationProgressPhase;
+	mode: GenerationMode;
+	filePath: string;
+	fileName: string;
+	currentFileIndex: number;
+	totalFiles: number;
+	currentChunkIndex: number;
+	totalChunks: number;
+	progress: number;
+	summary: string;
+	detail: string;
+}

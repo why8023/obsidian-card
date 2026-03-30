@@ -148,11 +148,51 @@
 }
 
 .obcard-sidebar-filter,
+.obcard-sidebar-progress,
 .obcard-sidebar-section,
 .obcard-sidebar-card {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
+}
+
+.obcard-sidebar-progress {
+	padding: 12px;
+	border-radius: 12px;
+	border: 1px solid var(--background-modifier-border);
+	background: linear-gradient(180deg, var(--background-secondary), var(--background-primary-alt));
+}
+
+.obcard-sidebar-progress-title {
+	font-size: 13px;
+}
+
+.obcard-sidebar-progress-meter {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.obcard-sidebar-progress-track {
+	flex: 1 1 auto;
+	height: 8px;
+	border-radius: 999px;
+	overflow: hidden;
+	background: var(--background-modifier-border);
+}
+
+.obcard-sidebar-progress-fill {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, var(--interactive-accent), color-mix(in srgb, var(--interactive-accent) 65%, white));
+}
+
+.obcard-sidebar-progress-value {
+	min-width: 42px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-align: right;
 }
 
 .obcard-sidebar-section-header {
@@ -300,6 +340,19 @@
 
 .obcard-sidebar-table-row.is-selected {
 	background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+
+.obcard-sidebar-table-row.is-selectable {
+	cursor: pointer;
+}
+
+.obcard-sidebar-table-row.is-selectable:hover {
+	background: color-mix(in srgb, var(--interactive-accent) 6%, transparent);
+}
+
+.obcard-sidebar-table-row.is-selectable:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: -2px;
 }
 
 .obcard-sidebar-table-select-cell {

@@ -144,7 +144,7 @@ function upsertCardGroups(
 			kind: group.chunk.blockKind,
 		}, group.cards, newline);
 		const blockToWrite = shouldUseObarWrapper && options?.obarCompatibility
-			? renderObarWrappedBlock(block, newline, options.obarCompatibility)
+			? renderObarWrappedBlock(block, newline)
 			: block;
 
 		insertedCount += group.cards.length;
@@ -158,7 +158,7 @@ function upsertCardGroups(
 			.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
 
 		if (existingBlock) {
-			workingContent = `${workingContent.slice(0, existingBlock.range.from)}${blockToWrite}${workingContent.slice(existingBlock.range.to)}`;
+			workingContent = replaceBlockAt(workingContent, existingBlock.range, blockToWrite, newline);
 			continue;
 		}
 
@@ -179,6 +179,11 @@ function insertBlockAt(content: string, offset: number, block: string, newline: 
 	const suffix = buildInsertSuffix(after, newline);
 
 	return `${before}${prefix}${block}${suffix}${after}`;
+}
+
+function replaceBlockAt(content: string, range: TextRange, block: string, newline: string): string {
+	const strippedContent = `${content.slice(0, range.from)}${content.slice(range.to)}`;
+	return insertBlockAt(strippedContent, range.from, block, newline);
 }
 
 function buildInsertPrefix(before: string, newline: string): string {

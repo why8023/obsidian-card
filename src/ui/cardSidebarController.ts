@@ -1,7 +1,7 @@
 import { MarkdownView, Notice, TAbstractFile, TFile } from "obsidian";
 
 import type ObsidianCardPlugin from "../main";
-import type { ExistingCardEntry, ReviewGroup, ReviewResult, SidebarReviewSession } from "../types";
+import type { ExistingCardEntry, GenerationProgressState, ReviewGroup, ReviewResult, SidebarReviewSession } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { cloneReviewGroups, collectApprovedGroups } from "./reviewState";
 import { deleteExistingCards, restoreDeletedCards } from "../writing/flashcardWriter";
@@ -18,6 +18,7 @@ export interface CardSidebarSnapshot {
 	displayFile: TFile | null;
 	pendingSession: SidebarReviewSession | null;
 	existingCards: ExistingCardEntry[];
+	generationProgress: GenerationProgressState | null;
 	isMutating: boolean;
 	hasUndoableDelete: boolean;
 }
@@ -38,6 +39,7 @@ export class CardSidebarController {
 	private pendingResolve: ((result: ReviewResult) => void) | null = null;
 	private refreshToken = 0;
 	private isMutating = false;
+	private generationProgress: GenerationProgressState | null = null;
 	private undoDeleteOperation: UndoDeleteOperation | null = null;
 
 	constructor(plugin: ObsidianCardPlugin) {
@@ -79,6 +81,7 @@ export class CardSidebarController {
 			displayFile,
 			pendingSession: this.pendingSession,
 			existingCards: [...this.existingCards],
+			generationProgress: this.generationProgress === null ? null : { ...this.generationProgress },
 			isMutating: this.isMutating,
 			hasUndoableDelete: displayFile !== null && this.undoDeleteOperation?.filePath === displayFile.path,
 		};
@@ -92,6 +95,30 @@ export class CardSidebarController {
 	async refresh(): Promise<void> {
 		this.activeFile = this.resolveActiveMarkdownFile();
 		await this.refreshDisplayedFileCards();
+	}
+
+	async startGenerationProgress(progress: GenerationProgressState): Promise<void> {
+		const shouldEnsureView = this.generationProgress === null
+			|| this.plugin.app.workspace.getLeavesOfType(OBCARD_SIDEBAR_VIEW_TYPE).length === 0;
+		this.generationProgress = normalizeGenerationProgress(progress);
+		if (shouldEnsureView) {
+			await this.ensureViewOpen();
+		}
+		this.notify();
+	}
+
+	updateGenerationProgress(progress: GenerationProgressState): void {
+		this.generationProgress = normalizeGenerationProgress(progress);
+		this.notify();
+	}
+
+	clearGenerationProgress(): void {
+		if (this.generationProgress === null) {
+			return;
+		}
+
+		this.generationProgress = null;
+		this.notify();
 	}
 
 	async openReviewSession(options: OpenReviewSessionOptions): Promise<ReviewResult> {
@@ -377,4 +404,16 @@ function getErrorMessage(error: unknown): string {
 	}
 
 	return String(error);
+}
+
+function normalizeGenerationProgress(progress: GenerationProgressState): GenerationProgressState {
+	const totalFiles = Math.max(progress.totalFiles, 1);
+	return {
+		...progress,
+		currentFileIndex: Math.max(1, Math.min(progress.currentFileIndex, totalFiles)),
+		totalFiles,
+		currentChunkIndex: Math.max(0, progress.currentChunkIndex),
+		totalChunks: Math.max(0, progress.totalChunks),
+		progress: Math.max(0, Math.min(1, progress.progress)),
+	};
 }

@@ -13,14 +13,9 @@ export const DEFAULT_OBAR_FRONTMATTER_KEYS = [
 	"obar_session_url",
 ];
 
-export const DEFAULT_OBAR_NOTE_HEADING_LEVEL = 2;
-export const DEFAULT_OBAR_NOTE_HEADING_TEXT = "Flashcards";
-
 export interface ObarCompatibilityConfig {
 	enabled: boolean;
 	frontmatterKeys: string[];
-	noteHeadingLevel: number;
-	noteHeadingText: string;
 }
 
 interface MarkerMatch {
@@ -67,18 +62,8 @@ export function isObarRecordContent(
 export function renderObarWrappedBlock(
 	block: string,
 	newline: string,
-	config: Pick<ObarCompatibilityConfig, "noteHeadingLevel" | "noteHeadingText">,
 ): string {
-	const headingText = config.noteHeadingText.trim();
-	const sections: string[] = [];
-
-	if (headingText.length > 0) {
-		sections.push(`${"#".repeat(clampHeadingLevel(config.noteHeadingLevel))} ${headingText}`);
-	}
-
-	sections.push(block.replace(/\r\n/g, "\n").replace(/\n/g, newline));
-
-	const innerContent = sections.join(`${newline}${newline}`);
+	const innerContent = block.replace(/\r\n/g, "\n").replace(/\n/g, newline);
 	const noteId = createObarCustomNoteId();
 
 	return [
@@ -137,15 +122,6 @@ function createObarCustomNoteId(length = DEFAULT_OBAR_NOTE_ID_LENGTH): string {
 
 	return output;
 }
-
-function clampHeadingLevel(value: number): number {
-	if (!Number.isFinite(value)) {
-		return DEFAULT_OBAR_NOTE_HEADING_LEVEL;
-	}
-
-	return Math.max(1, Math.min(6, Math.round(value)));
-}
-
 function findLastMarkerBefore(
 	content: string,
 	pattern: RegExp,

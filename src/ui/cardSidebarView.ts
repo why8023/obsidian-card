@@ -34,7 +34,6 @@ export class CardSidebarView extends ItemView {
 	private searchText = "";
 	private filterScope: SidebarScope = "all";
 	private actionsInitialized = false;
-	private insertedSelectionMode = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
 	private renderedDisplayFilePath: string | null = null;
@@ -87,8 +86,14 @@ export class CardSidebarView extends ItemView {
 		const displayFile = state.displayFile;
 		this.syncInsertedSelection(displayFile?.path ?? null, state.existingCards);
 
+		if (state.generationProgress !== null) {
+			this.renderGenerationProgress(rootEl, state.generationProgress);
+		}
+
 		if (displayFile === null) {
-			this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to start reviewing.");
+			if (state.generationProgress === null) {
+				this.renderEmptyState(rootEl, "Open a Markdown file or generate flashcards to start reviewing.");
+			}
 			return;
 		}
 
@@ -130,7 +135,6 @@ export class CardSidebarView extends ItemView {
 	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
 		if (this.renderedDisplayFilePath !== displayFilePath) {
 			this.selectedInsertedCardIds.clear();
-			this.insertedSelectionMode = false;
 			this.renderedDisplayFilePath = displayFilePath;
 			return;
 		}
@@ -141,6 +145,53 @@ export class CardSidebarView extends ItemView {
 				this.selectedInsertedCardIds.delete(cardId);
 			}
 		}
+	}
+
+	private renderGenerationProgress(containerEl: HTMLElement, progress: NonNullable<CardSidebarSnapshot["generationProgress"]>): void {
+		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-progress" });
+		const headerEl = sectionEl.createDiv({ cls: "obcard-sidebar-section-header" });
+		headerEl.createEl("h4", {
+			cls: "obcard-sidebar-section-title",
+			text: "Generation progress",
+		});
+
+		const chipsEl = headerEl.createDiv({ cls: "obcard-sidebar-chips" });
+		chipsEl.createEl("span", {
+			cls: "obcard-sidebar-chip",
+			text: this.getGenerationPhaseLabel(progress.phase),
+		});
+		chipsEl.createEl("span", {
+			cls: "obcard-sidebar-chip",
+			text: `File ${progress.currentFileIndex}/${progress.totalFiles}`,
+		});
+		if (progress.totalChunks > 0) {
+			chipsEl.createEl("span", {
+				cls: "obcard-sidebar-chip",
+				text: `Chunk ${Math.min(progress.currentChunkIndex, progress.totalChunks)}/${progress.totalChunks}`,
+			});
+		}
+
+		sectionEl.createEl("strong", {
+			cls: "obcard-sidebar-progress-title",
+			text: progress.summary,
+		});
+		sectionEl.createEl("p", {
+			cls: "obcard-sidebar-path",
+			text: progress.filePath,
+		});
+		sectionEl.createEl("p", {
+			cls: "obcard-sidebar-note",
+			text: progress.detail,
+		});
+
+		const meterEl = sectionEl.createDiv({ cls: "obcard-sidebar-progress-meter" });
+		const trackEl = meterEl.createDiv({ cls: "obcard-sidebar-progress-track" });
+		const fillEl = trackEl.createDiv({ cls: "obcard-sidebar-progress-fill" });
+		fillEl.style.width = `${Math.round(progress.progress * 100)}%`;
+		meterEl.createEl("span", {
+			cls: "obcard-sidebar-progress-value",
+			text: `${Math.round(progress.progress * 100)}%`,
+		});
 	}
 
 	private renderFileHeader(
@@ -356,9 +407,10 @@ export class CardSidebarView extends ItemView {
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
+		const isSelectionMode = selectedCount > 0;
 		const actionsEl = headerEl.createDiv({ cls: "obcard-sidebar-actions" });
 
-		if (this.insertedSelectionMode) {
+		if (isSelectionMode) {
 			this.createActionButton(actionsEl, "Select all visible", () => {
 				for (const card of filteredCards) {
 					this.selectedInsertedCardIds.add(card.id);
@@ -372,16 +424,6 @@ export class CardSidebarView extends ItemView {
 			this.createActionButton(actionsEl, `Delete selected (${selectedCount})`, () => {
 				void this.handleDeleteSelectedCards();
 			}, { cta: true, disabled: state.isMutating || selectedCount === 0 });
-			this.createActionButton(actionsEl, "Done", () => {
-				this.insertedSelectionMode = false;
-				this.selectedInsertedCardIds.clear();
-				this.render();
-			}, { disabled: state.isMutating });
-		} else {
-			this.createActionButton(actionsEl, "Select cards", () => {
-				this.insertedSelectionMode = true;
-				this.render();
-			}, { disabled: state.isMutating || filteredCards.length === 0 });
 		}
 
 		if (state.hasUndoableDelete) {
@@ -392,21 +434,19 @@ export class CardSidebarView extends ItemView {
 
 		this.renderColumnSettings(sectionEl, state.isMutating);
 
-		if (this.insertedSelectionMode) {
-			sectionEl.createEl("p", {
-				cls: "obcard-sidebar-note",
-				text: selectedCount > 0
-					? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected for deletion.`
-					: "Selection mode is on. Choose one or more cards to delete.",
-			});
-		}
+		sectionEl.createEl("p", {
+			cls: "obcard-sidebar-note",
+			text: selectedCount > 0
+				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected for bulk actions.`
+				: "Click any card row to start multi-select.",
+		});
 
 		if (filteredCards.length === 0) {
 			this.renderEmptyState(sectionEl, "No inserted cards match the current filter.");
 			return;
 		}
 
-		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating);
+		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating, isSelectionMode);
 	}
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
@@ -443,14 +483,19 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
-	private renderInsertedTable(containerEl: HTMLElement, cards: ExistingCardEntry[], isMutating: boolean): void {
+	private renderInsertedTable(
+		containerEl: HTMLElement,
+		cards: ExistingCardEntry[],
+		isMutating: boolean,
+		isSelectionMode: boolean,
+	): void {
 		const visibleColumns = this.getVisibleInsertedColumns();
 		const tableWrapperEl = containerEl.createDiv({ cls: "obcard-sidebar-table-wrapper" });
 		const tableEl = tableWrapperEl.createEl("table", { cls: "obcard-sidebar-table" });
 		const tableHeadEl = tableEl.createEl("thead");
 		const headerRowEl = tableHeadEl.createEl("tr");
 
-		if (this.insertedSelectionMode) {
+		if (isSelectionMode) {
 			const selectAllCell = headerRowEl.createEl("th", { cls: "obcard-sidebar-table-select-cell" });
 			const selectAllCheckbox = selectAllCell.createEl("input", {
 				attr: {
@@ -495,11 +540,15 @@ export class CardSidebarView extends ItemView {
 		const tableBodyEl = tableEl.createEl("tbody");
 		for (const card of cards) {
 			const rowEl = tableBodyEl.createEl("tr", { cls: "obcard-sidebar-table-row" });
+			rowEl.addClass("is-selectable");
+			rowEl.tabIndex = 0;
+			rowEl.setAttr("aria-selected", this.selectedInsertedCardIds.has(card.id) ? "true" : "false");
 			if (this.selectedInsertedCardIds.has(card.id)) {
 				rowEl.addClass("is-selected");
 			}
+			this.bindInsertedRowSelection(rowEl, card.id, isMutating);
 
-			if (this.insertedSelectionMode) {
+			if (isSelectionMode) {
 				const selectionCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-select-cell" });
 				const checkboxEl = selectionCell.createEl("input", {
 					attr: {
@@ -546,6 +595,40 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
+	private bindInsertedRowSelection(rowEl: HTMLTableRowElement, cardId: string, isMutating: boolean): void {
+		rowEl.addEventListener("click", (event) => {
+			if (isMutating || this.isInteractiveEventTarget(event.target)) {
+				return;
+			}
+
+			this.toggleInsertedCardSelection(cardId);
+			this.render();
+		});
+
+		rowEl.addEventListener("keydown", (event) => {
+			if (isMutating || this.isInteractiveEventTarget(event.target)) {
+				return;
+			}
+
+			if (event.key !== "Enter" && event.key !== " ") {
+				return;
+			}
+
+			event.preventDefault();
+			this.toggleInsertedCardSelection(cardId);
+			this.render();
+		});
+	}
+
+	private toggleInsertedCardSelection(cardId: string): void {
+		if (this.selectedInsertedCardIds.has(cardId)) {
+			this.selectedInsertedCardIds.delete(cardId);
+			return;
+		}
+
+		this.selectedInsertedCardIds.add(cardId);
+	}
+
 	private createInsertedTableCell(
 		rowEl: HTMLElement,
 		text: string,
@@ -588,7 +671,6 @@ export class CardSidebarView extends ItemView {
 		try {
 			await this.plugin.sidebar.deleteInsertedCards(selectedCardIds);
 			this.selectedInsertedCardIds.clear();
-			this.insertedSelectionMode = false;
 			this.render();
 		} catch {
 			// Notice is already shown by the controller.
@@ -713,6 +795,26 @@ export class CardSidebarView extends ItemView {
 
 		if (options.cta) {
 			button.setCta();
+		}
+	}
+
+	private isInteractiveEventTarget(target: EventTarget | null): boolean {
+		return target instanceof HTMLElement
+			&& target.closest("button, a, input, textarea, select, label, summary") !== null;
+	}
+
+	private getGenerationPhaseLabel(phase: NonNullable<CardSidebarSnapshot["generationProgress"]>["phase"]): string {
+		switch (phase) {
+			case "preparing":
+				return "Preparing";
+			case "generating":
+				return "Generating";
+			case "reviewing":
+				return "Awaiting review";
+			case "writing":
+				return "Writing";
+			default:
+				return phase;
 		}
 	}
 
