@@ -103,7 +103,10 @@
 }
 
 .obcd-sidebar-scope-button {
-	flex: 1 1 0;
+	flex: 0 0 auto;
+	min-height: 30px;
+	padding: 4px 12px;
+	border-radius: 999px;
 }
 
 .obcd-sidebar-scope-button.is-active {

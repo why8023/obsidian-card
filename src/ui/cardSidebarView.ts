@@ -21,13 +21,16 @@ import {
 	type SidebarTableColumnDefinition,
 } from "./sidebarTableColumns";
 
-type CardFilterScope = "all" | "generated";
+interface CardTagFilterOption {
+	tag: string;
+	count: number;
+}
 
 export class CardSidebarView extends ItemView {
 	private readonly plugin: ObcdPlugin;
 	private unsubscribe: (() => void) | null = null;
 	private searchText = "";
-	private cardFilterScope: CardFilterScope = "all";
+	private activeTagFilter: string | null = null;
 	private actionsInitialized = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
@@ -111,6 +114,7 @@ export class CardSidebarView extends ItemView {
 	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
 		if (this.renderedDisplayFilePath !== displayFilePath) {
 			this.selectedInsertedCardIds.clear();
+			this.activeTagFilter = null;
 			this.resetDeleteConfirmations();
 			this.renderedDisplayFilePath = displayFilePath;
 			return;
@@ -125,6 +129,13 @@ export class CardSidebarView extends ItemView {
 
 		if (this.pendingSingleDeleteCardId !== null && !validCardIds.has(this.pendingSingleDeleteCardId)) {
 			this.pendingSingleDeleteCardId = null;
+		}
+
+		if (this.activeTagFilter !== null) {
+			const availableTags = new Set(cards.flatMap((card) => card.tags));
+			if (!availableTags.has(this.activeTagFilter)) {
+				this.activeTagFilter = null;
+			}
 		}
 
 		if (this.selectedInsertedCardIds.size === 0) {
@@ -240,8 +251,7 @@ export class CardSidebarView extends ItemView {
 		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
 		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
 
-		const generatedCardCount = cards.filter((card) => card.isPluginGenerated).length;
-		this.renderScopeFilters(headerEl, cards.length, generatedCardCount, state.isMutating);
+		this.renderScopeFilters(headerEl, cards.length, this.getTagFilterOptions(cards), state.isMutating);
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
@@ -290,8 +300,8 @@ export class CardSidebarView extends ItemView {
 				sectionEl,
 				state.isRefreshingFile
 					? "Loading flashcards..."
-					: this.cardFilterScope === "generated"
-					? "No plugin-generated flashcards match the current filter."
+					: this.activeTagFilter !== null
+					? `No flashcards with the tag "${this.activeTagFilter}" match the current filter.`
 					: "No flashcards match the current filter.",
 			);
 			return;
@@ -303,12 +313,33 @@ export class CardSidebarView extends ItemView {
 	private renderScopeFilters(
 		containerEl: HTMLElement,
 		totalCount: number,
-		generatedCount: number,
+		tagFilters: CardTagFilterOption[],
 		isMutating: boolean,
 	): void {
 		const scopeEl = containerEl.createDiv({ cls: "obcd-sidebar-scope" });
-		this.createScopeButton(scopeEl, `All cards (${totalCount})`, "all", isMutating);
-		this.createScopeButton(scopeEl, `Plugin (${generatedCount})`, "generated", isMutating);
+		this.createScopeButton(scopeEl, `All cards (${totalCount})`, this.activeTagFilter === null, isMutating, () => {
+			if (this.activeTagFilter === null) {
+				return;
+			}
+
+			this.activeTagFilter = null;
+			this.resetDeleteConfirmations();
+			this.render();
+		});
+
+		for (const tagFilter of tagFilters) {
+			const isActive = this.activeTagFilter === tagFilter.tag;
+			this.createScopeButton(scopeEl, `${tagFilter.tag} (${tagFilter.count})`, isActive, isMutating, () => {
+				const nextTagFilter = isActive ? null : tagFilter.tag;
+				if (this.activeTagFilter === nextTagFilter) {
+					return;
+				}
+
+				this.activeTagFilter = nextTagFilter;
+				this.resetDeleteConfirmations();
+				this.render();
+			});
+		}
 	}
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
@@ -559,8 +590,21 @@ export class CardSidebarView extends ItemView {
 			.filter((column): column is SidebarTableColumnDefinition => column !== undefined);
 	}
 
+	private getTagFilterOptions(cards: ExistingCardEntry[]): CardTagFilterOption[] {
+		const counts = new Map<string, number>();
+		for (const card of cards) {
+			for (const tag of new Set(card.tags)) {
+				counts.set(tag, (counts.get(tag) ?? 0) + 1);
+			}
+		}
+
+		return Array.from(counts.entries())
+			.sort(([leftTag], [rightTag]) => leftTag.localeCompare(rightTag))
+			.map(([tag, count]) => ({ tag, count }));
+	}
+
 	private matchesCard(card: ExistingCardEntry): boolean {
-		if (this.cardFilterScope === "generated" && !card.isPluginGenerated) {
+		if (this.activeTagFilter !== null && !card.tags.includes(this.activeTagFilter)) {
 			return false;
 		}
 		return this.matchesText(getSearchableCardValues(card));
@@ -599,23 +643,18 @@ export class CardSidebarView extends ItemView {
 	private createScopeButton(
 		containerEl: HTMLElement,
 		label: string,
-		scope: CardFilterScope,
+		isActive: boolean,
 		isMutating: boolean,
+		onClick: () => void,
 	): void {
 		const button = new ButtonComponent(containerEl)
 			.setButtonText(label)
 			.setDisabled(isMutating)
 			.onClick(() => {
-				if (this.cardFilterScope === scope) {
-					return;
-				}
-
-				this.cardFilterScope = scope;
-				this.resetDeleteConfirmations();
-				this.render();
+				onClick();
 			});
 		button.buttonEl.addClass("obcd-sidebar-scope-button");
-		if (this.cardFilterScope === scope) {
+		if (isActive) {
 			button.buttonEl.addClass("is-active");
 		}
 	}
