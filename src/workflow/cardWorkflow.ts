@@ -286,7 +286,7 @@ export class FlashcardWorkflow {
 				obarCompatibility: this.plugin.settings.compatibility.obar,
 			});
 			if (!isBatchMode) {
-				await this.plugin.sidebar.refresh();
+				await this.plugin.sidebar.refreshFromVault(file);
 			}
 			new Notice(`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"} into ${file.basename}.`);
 			debugRun.recordWrite({

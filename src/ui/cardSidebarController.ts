@@ -110,6 +110,10 @@ export class CardSidebarController {
 		await this.handleActiveFileChange(nextFile, "manual-refresh");
 	}
 
+	async refreshFromVault(forcedFile?: TFile | null): Promise<void> {
+		await this.refreshDisplayedFileCards(forcedFile ?? this.activeFile, "mutation:refresh");
+	}
+
 	async startGenerationProgress(progress: GenerationProgressState): Promise<void> {
 		const shouldEnsureView = this.generationProgress === null
 			|| this.plugin.app.workspace.getLeavesOfType(OBCD_SIDEBAR_VIEW_TYPE).length === 0;
@@ -176,7 +180,7 @@ export class CardSidebarController {
 				afterContent: result.afterContent,
 			};
 
-			await this.refreshDisplayedFileCards(file);
+			this.applyDisplayedFileContent(file, result.afterContent);
 			new Notice(`Deleted ${result.deletedCount} flashcard${result.deletedCount === 1 ? "" : "s"}. Use Undo delete to restore them.`);
 		} catch (error) {
 			new Notice(`Failed to delete flashcards: ${getErrorMessage(error)}`);
@@ -213,7 +217,7 @@ export class CardSidebarController {
 			}
 
 			this.undoDeleteOperation = null;
-			await this.refreshDisplayedFileCards(file);
+			this.applyDisplayedFileContent(file, operation.beforeContent);
 			new Notice(`Restored ${operation.deletedCount} flashcard${operation.deletedCount === 1 ? "" : "s"}.`);
 		} catch (error) {
 			new Notice(`Failed to restore flashcards: ${getErrorMessage(error)}`);
@@ -251,10 +255,7 @@ export class CardSidebarController {
 			return;
 		}
 
-		const nextCards = collectExistingCardEntries(file, readResult.content);
-		this.existingCards = nextCards;
-		this.isRefreshingFile = false;
-		this.notify();
+		this.applyDisplayedFileContent(file, readResult.content);
 	}
 
 	private resolveActiveMarkdownFile(): TFile | null {
@@ -266,6 +267,12 @@ export class CardSidebarController {
 	private async readFileContent(file: TFile, reason: string): Promise<{
 		content: string;
 	}> {
+		if (reason.startsWith("vault:") || reason.startsWith("mutation:")) {
+			return {
+				content: await this.plugin.app.vault.read(file),
+			};
+		}
+
 		const preferCachedRead = reason.startsWith("workspace:");
 		const markdownViewContext = this.resolveCurrentMarkdownViewContext();
 		const markdownView = markdownViewContext.view;
@@ -278,6 +285,16 @@ export class CardSidebarController {
 		return {
 			content: await this.plugin.app.vault.cachedRead(file),
 		};
+	}
+
+	private applyDisplayedFileContent(file: TFile, content: string): void {
+		if (this.activeFile?.path !== file.path) {
+			return;
+		}
+
+		this.existingCards = collectExistingCardEntries(file, content);
+		this.isRefreshingFile = false;
+		this.notify();
 	}
 
 	private resolveCurrentMarkdownViewContext(): ResolvedMarkdownViewContext {
