@@ -33,6 +33,7 @@ interface GenerationProgressContext {
 
 export class FlashcardWorkflow {
 	private readonly plugin: ObcdPlugin;
+	private isGenerationRunning = false;
 
 	constructor(plugin: ObcdPlugin) {
 		this.plugin = plugin;
@@ -433,6 +434,13 @@ export class FlashcardWorkflow {
 	}
 
 	private async runSafely(task: () => Promise<void>): Promise<void> {
+		if (this.isGenerationRunning) {
+			new Notice("Flashcard generation is already running.");
+			return;
+		}
+
+		this.isGenerationRunning = true;
+
 		try {
 			await task();
 		} catch (error) {
@@ -440,6 +448,7 @@ export class FlashcardWorkflow {
 			console.error("OBCD command failed", error);
 			new Notice(message, 10000);
 		} finally {
+			this.isGenerationRunning = false;
 			this.plugin.sidebar.clearGenerationProgress();
 		}
 	}

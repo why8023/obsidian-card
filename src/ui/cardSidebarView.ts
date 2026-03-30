@@ -118,6 +118,9 @@ export class CardSidebarView extends ItemView {
 			insertedCount: state.existingCards.length,
 			isDetachedFromActiveFile: pendingSession !== null && state.activeFile?.path !== displayFile.path,
 			activeFileName: state.activeFile?.basename ?? "",
+			activeFilePath: state.activeFile?.path ?? "",
+			canGenerateCurrentFile: state.activeFile !== null,
+			isGeneratingCurrentFile: state.generationProgress !== null,
 		});
 
 		this.renderFilterBar(rootEl);
@@ -215,6 +218,9 @@ export class CardSidebarView extends ItemView {
 			insertedCount: number;
 			isDetachedFromActiveFile: boolean;
 			activeFileName: string;
+			activeFilePath: string;
+			canGenerateCurrentFile: boolean;
+			isGeneratingCurrentFile: boolean;
 		},
 	): void {
 		const headerEl = containerEl.createDiv({ cls: "obcd-sidebar-header" });
@@ -240,10 +246,30 @@ export class CardSidebarView extends ItemView {
 			text: `Inserted ${state.insertedCount}`,
 		});
 
+		const actionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
+		const generateButton = new ButtonComponent(actionsEl)
+			.setButtonText(state.isGeneratingCurrentFile ? "Generating current file..." : "Generate current file")
+			.setDisabled(!state.canGenerateCurrentFile || state.isGeneratingCurrentFile)
+			.onClick(() => {
+				void this.plugin.workflow.generateForCurrentFile();
+			});
+		generateButton.setCta();
+		generateButton.buttonEl.setAttr(
+			"title",
+			state.canGenerateCurrentFile
+				? `Generate flashcards for ${state.activeFilePath}.`
+				: "Open a Markdown file to generate flashcards for the current file.",
+		);
+
 		if (state.isDetachedFromActiveFile && state.activeFileName.length > 0) {
 			headerEl.createEl("p", {
 				cls: "obcd-sidebar-note",
 				text: `Review stays pinned to this file. Current editor: ${state.activeFileName}.`,
+			});
+		} else if (!state.canGenerateCurrentFile) {
+			headerEl.createEl("p", {
+				cls: "obcd-sidebar-note",
+				text: "Open a Markdown file to generate flashcards for the current file.",
 			});
 		}
 	}
