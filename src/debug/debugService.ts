@@ -1,6 +1,6 @@
 import { normalizePath } from "obsidian";
 
-import type ObsidianCardPlugin from "../main";
+import type ObcdPlugin from "../main";
 import { getActiveProvider, getProviderChatCompletionsUrl, getResolvedProviderBaseUrl } from "../providerConfig";
 import type {
 	CardCandidate,
@@ -14,7 +14,7 @@ import { makePreview } from "../utils/markdown";
 
 const DEBUG_ARTIFACT_SCHEMA_VERSION = 1;
 const DEBUG_ARTIFACT_DIRECTORY_NAME = "debug";
-const DEBUG_CONSOLE_PREFIX = "[OBCARD debug]";
+const DEBUG_CONSOLE_PREFIX = "[OBCD debug]";
 const DEBUG_REDACTED_VALUE = "<redacted>";
 const MAX_DEBUG_ARTIFACTS = 20;
 
@@ -121,7 +121,7 @@ export interface DebugRun {
 export class DebugService {
 	private readonly disabledRun: DebugRun = new NoopDebugRun();
 
-	constructor(private readonly plugin: ObsidianCardPlugin) {}
+	constructor(private readonly plugin: ObcdPlugin) {}
 
 	createRun(context: DebugRunContext): DebugRun {
 		if (!this.plugin.settings.debug.enabled) {
@@ -144,7 +144,7 @@ class ActiveDebugRun implements DebugRun {
 	private completed = false;
 
 	constructor(
-		private readonly plugin: ObsidianCardPlugin,
+		private readonly plugin: ObcdPlugin,
 		private readonly context: DebugRunContext,
 	) {
 		const activeProvider = getActiveProvider(plugin.settings);
@@ -304,11 +304,11 @@ class ActiveDebugRun implements DebugRun {
 
 		this.artifact.events.push(event);
 		if (details === undefined) {
-			console.log(DEBUG_CONSOLE_PREFIX, stage, message);
+			console.debug(DEBUG_CONSOLE_PREFIX, stage, message);
 			return;
 		}
 
-		console.log(DEBUG_CONSOLE_PREFIX, stage, message, event.details);
+		console.debug(DEBUG_CONSOLE_PREFIX, stage, message, event.details);
 	}
 
 	async finish(outcome: string, details?: unknown): Promise<void> {
@@ -327,7 +327,7 @@ class ActiveDebugRun implements DebugRun {
 
 		try {
 			const artifactPath = await this.writeArtifact();
-			console.log(DEBUG_CONSOLE_PREFIX, "artifact", `Saved debug artifact to ${artifactPath}`);
+			console.debug(DEBUG_CONSOLE_PREFIX, "artifact", `Saved debug artifact to ${artifactPath}`);
 		} catch (error) {
 			console.warn(DEBUG_CONSOLE_PREFIX, "artifact", "Failed to save debug artifact.", serializeErrorRecord("persist", error));
 		}
@@ -382,7 +382,7 @@ class NoopDebugRun implements DebugRun {
 }
 
 async function trimDebugArtifacts(
-	adapter: ObsidianCardPlugin["app"]["vault"]["adapter"],
+	adapter: ObcdPlugin["app"]["vault"]["adapter"],
 	artifactDirectory: string,
 ): Promise<void> {
 	const listedFiles = await adapter.list(artifactDirectory);
@@ -498,5 +498,17 @@ function toSerializableValue(value: unknown, seen = new WeakSet<object>()): unkn
 		return result;
 	}
 
-	return String(value);
+	if (typeof value === "bigint") {
+		return value.toString();
+	}
+
+	if (typeof value === "symbol") {
+		return value.description ? `Symbol(${value.description})` : "Symbol()";
+	}
+
+	if (typeof value === "function") {
+		return `[Function ${value.name || "anonymous"}]`;
+	}
+
+	return "";
 }

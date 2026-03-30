@@ -2,7 +2,7 @@ import { MarkdownView, Notice, TFile } from "obsidian";
 
 import type { Editor, MarkdownFileInfo } from "obsidian";
 
-import type ObsidianCardPlugin from "../main";
+import type ObcdPlugin from "../main";
 import { AiCardGenerator } from "../generation/cardGenerator";
 import { buildReviewGroups } from "../generation/cardValidator";
 import { buildFileChunks, buildSelectionChunks } from "../generation/contentChunkBuilder";
@@ -32,9 +32,9 @@ interface GenerationProgressContext {
 }
 
 export class FlashcardWorkflow {
-	private readonly plugin: ObsidianCardPlugin;
+	private readonly plugin: ObcdPlugin;
 
-	constructor(plugin: ObsidianCardPlugin) {
+	constructor(plugin: ObcdPlugin) {
 		this.plugin = plugin;
 	}
 
@@ -167,7 +167,7 @@ export class FlashcardWorkflow {
 			new Notice(summaryParts.join(" "), 12000);
 
 			if (errors.length > 0) {
-				console.error("Obsidian Card folder generation errors", errors);
+				console.error("OBCD folder generation errors", errors);
 			}
 		});
 	}
@@ -333,7 +333,7 @@ export class FlashcardWorkflow {
 	private async generateChunkResults(
 		chunks: ContentChunk[],
 		generationPrompt: string,
-		debugRun: ReturnType<ObsidianCardPlugin["debug"]["createRun"]>,
+		debugRun: ReturnType<ObcdPlugin["debug"]["createRun"]>,
 		file: TFile,
 		mode: GenerationMode,
 		progressContext: GenerationProgressContext,
@@ -437,7 +437,7 @@ export class FlashcardWorkflow {
 			await task();
 		} catch (error) {
 			const message = this.getErrorMessage(error);
-			console.error("Obsidian Card command failed", error);
+			console.error("OBCD command failed", error);
 			new Notice(message, 10000);
 		} finally {
 			this.plugin.sidebar.clearGenerationProgress();

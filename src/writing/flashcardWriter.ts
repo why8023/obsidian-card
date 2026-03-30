@@ -4,9 +4,13 @@ import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
 import type { ApprovedCardGroup, CardBlockMetadata, ExistingCardEntry, GeneratedBasicCard, TextRange } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
-import { collectObsidianCardBlocks, detectNewline } from "../utils/markdown";
+import {
+	collectGeneratedCardBlocks,
+	findGeneratedCardBlockInnerRange,
+	GENERATED_CARD_BLOCK_END_MARKER,
+} from "../utils/generatedCardBlocks";
+import { detectNewline } from "../utils/markdown";
 
-const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
 const CARD_START_MARKER = "<!-- card-start";
 
 export async function writeApprovedCardGroups(
@@ -105,7 +109,7 @@ export function renderCardBlock(metadata: CardBlockMetadata, cards: GeneratedBas
 		sourceHash: metadata.sourceHash,
 		kind: metadata.kind,
 	});
-	const parts = [`<!-- obcard-section:start ${serializedMetadata} -->`];
+	const parts = [`<!-- obcd-section:start ${serializedMetadata} -->`];
 
 	for (const [index, card] of cards.entries()) {
 		if (index > 0) {
@@ -115,7 +119,7 @@ export function renderCardBlock(metadata: CardBlockMetadata, cards: GeneratedBas
 		parts.push(renderBasicCard(card, newline));
 	}
 
-	parts.push(OBCARD_SECTION_END_MARKER);
+	parts.push(GENERATED_CARD_BLOCK_END_MARKER);
 	return parts.join(newline);
 }
 
@@ -140,7 +144,7 @@ function upsertCardGroups(
 	for (const group of sortedGroups) {
 		const existingBlock = group.chunk.kind === "selection"
 			? undefined
-			: collectObsidianCardBlocks(workingContent)
+			: collectGeneratedCardBlocks(workingContent)
 				.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
 
 		if (group.cards.length === 0) {
@@ -298,7 +302,7 @@ function removeExistingCardsFromContent(
 		}
 
 		replacements.push({
-			range: findInnerCardBlockRange(content, block.range) ?? block.range,
+			range: findGeneratedCardBlockInnerRange(content, block.range) ?? block.range,
 			value: renderCardBlock(
 				block.metadata,
 				remainingCards.map((entry) => ({
@@ -355,7 +359,7 @@ function applyRangeReplacements(content: string, replacements: Array<{ range: Te
 }
 
 function cleanupEmptyGeneratedBlocks(content: string, newline: string): string {
-	const replacements = collectObsidianCardBlocks(content)
+	const replacements = collectGeneratedCardBlocks(content)
 		.filter((block) => isGeneratedBlockEmpty(content, block.range))
 		.map((block) => ({
 			range: expandBlockRemovalRange(content, block.range, newline),
@@ -398,7 +402,7 @@ function expandBlockRemovalRange(content: string, range: TextRange, newline: str
 }
 
 function isGeneratedBlockEmpty(content: string, outerRange: TextRange): boolean {
-	const innerRange = findInnerCardBlockRange(content, outerRange) ?? outerRange;
+	const innerRange = findGeneratedCardBlockInnerRange(content, outerRange) ?? outerRange;
 	return !content.slice(innerRange.from, innerRange.to).includes(CARD_START_MARKER);
 }
 
@@ -410,20 +414,3 @@ function startsWithDoubleNewline(value: string, newline: string): boolean {
 	return value.startsWith(`${newline}${newline}`);
 }
 
-function findInnerCardBlockRange(content: string, outerRange: TextRange): TextRange | null {
-	const blockContent = content.slice(outerRange.from, outerRange.to);
-	const innerStart = blockContent.indexOf("<!-- obcard-section:start");
-	if (innerStart === -1) {
-		return null;
-	}
-
-	const innerEndMarkerIndex = blockContent.indexOf(OBCARD_SECTION_END_MARKER, innerStart);
-	if (innerEndMarkerIndex === -1) {
-		return null;
-	}
-
-	return {
-		from: outerRange.from + innerStart,
-		to: outerRange.from + innerEndMarkerIndex + OBCARD_SECTION_END_MARKER.length,
-	};
-}

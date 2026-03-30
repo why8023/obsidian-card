@@ -1,6 +1,6 @@
 {
-	"id": "obcard",
-	"name": "OBCARD",
+	"id": "obcd",
+	"name": "OBCD",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Generate, review, and append BASIC flashcards to notes.",

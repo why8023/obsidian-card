@@ -1,7 +1,7 @@
-import type ObsidianCardPlugin from "../main";
+import type ObcdPlugin from "../main";
 import { resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 
-export function registerCommands(plugin: ObsidianCardPlugin): void {
+export function registerCommands(plugin: ObcdPlugin): void {
 	plugin.addCommand({
 		id: "open-flashcard-sidebar",
 		name: "Open flashcard sidebar",

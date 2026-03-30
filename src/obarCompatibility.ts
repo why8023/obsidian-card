@@ -59,10 +59,7 @@ export function isObarRecordContent(
 	));
 }
 
-export function renderObarWrappedBlock(
-	block: string,
-	newline: string,
-): string {
+export function renderObarWrappedBlock(block: string, newline: string): string {
 	const innerContent = block.replace(/\r\n/g, "\n").replace(/\n/g, newline);
 	const noteId = createObarCustomNoteId();
 
@@ -73,10 +70,7 @@ export function renderObarWrappedBlock(
 	].join(newline);
 }
 
-export function expandRangeToIncludeObarCustomNote(
-	content: string,
-	range: TextRange,
-): TextRange {
+export function expandRangeToIncludeObarCustomNote(content: string, range: TextRange): TextRange {
 	const startMarker = findLastMarkerBefore(content, OBAR_CUSTOM_NOTE_START_PATTERN, range.from);
 	if (startMarker === null) {
 		return range;
@@ -122,11 +116,8 @@ function createObarCustomNoteId(length = DEFAULT_OBAR_NOTE_ID_LENGTH): string {
 
 	return output;
 }
-function findLastMarkerBefore(
-	content: string,
-	pattern: RegExp,
-	offset: number,
-): MarkerMatch | null {
+
+function findLastMarkerBefore(content: string, pattern: RegExp, offset: number): MarkerMatch | null {
 	pattern.lastIndex = 0;
 
 	let result: MarkerMatch | null = null;
@@ -151,12 +142,7 @@ function findLastMarkerBefore(
 	return result;
 }
 
-function findFirstMarkerAfter(
-	content: string,
-	pattern: RegExp,
-	offset: number,
-	id: string,
-): MarkerMatch | null {
+function findFirstMarkerAfter(content: string, pattern: RegExp, offset: number, id: string): MarkerMatch | null {
 	pattern.lastIndex = offset;
 
 	let match = pattern.exec(content);

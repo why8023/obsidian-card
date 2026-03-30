@@ -2,7 +2,7 @@ import { requestUrl } from "obsidian";
 
 import type { DebugRun } from "../debug/debugService";
 import { buildFlashcardOutputConstraintPrompt, DEFAULT_FLASHCARD_PROMPT } from "../prompts/promptDefaults";
-import type { ObsidianCardSettings } from "../settings";
+import type { ObcdSettings } from "../settings";
 import type { ContentChunk, GeneratedBasicCard } from "../types";
 import { getActiveProvider, getProviderChatCompletionsUrl, getProviderHeaders } from "../providerConfig";
 
@@ -18,11 +18,11 @@ interface ChatCompletionResponse {
 }
 
 export class AiCardGenerator {
-	private readonly settings: ObsidianCardSettings;
+	private readonly settings: ObcdSettings;
 	private readonly generationPrompt: string;
 	private readonly debugRun?: DebugRun;
 
-	constructor(settings: ObsidianCardSettings, generationPrompt: string, debugRun?: DebugRun) {
+	constructor(settings: ObcdSettings, generationPrompt: string, debugRun?: DebugRun) {
 		this.settings = settings;
 		this.generationPrompt = generationPrompt.trim().length > 0 ? generationPrompt : DEFAULT_FLASHCARD_PROMPT;
 		this.debugRun = debugRun;

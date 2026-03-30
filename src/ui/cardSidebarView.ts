@@ -8,7 +8,7 @@ import {
 
 import type { WorkspaceLeaf } from "obsidian";
 
-import type ObsidianCardPlugin from "../main";
+import type ObcdPlugin from "../main";
 import type {
 	CardCandidate,
 	ExistingCardEntry,
@@ -17,7 +17,7 @@ import type {
 	SidebarTableColumnId,
 } from "../types";
 import { makePreview } from "../utils/markdown";
-import { OBCARD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
+import { OBCD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
 import { setAllReviewGroupsApproved, setReviewGroupApproved } from "./reviewState";
 import {
 	findSidebarTableColumn,
@@ -29,7 +29,7 @@ import {
 type SidebarScope = "all" | "pending" | "inserted";
 
 export class CardSidebarView extends ItemView {
-	private readonly plugin: ObsidianCardPlugin;
+	private readonly plugin: ObcdPlugin;
 	private unsubscribe: (() => void) | null = null;
 	private searchText = "";
 	private filterScope: SidebarScope = "all";
@@ -38,13 +38,13 @@ export class CardSidebarView extends ItemView {
 	private selectedInsertedCardIds = new Set<string>();
 	private renderedDisplayFilePath: string | null = null;
 
-	constructor(leaf: WorkspaceLeaf, plugin: ObsidianCardPlugin) {
+	constructor(leaf: WorkspaceLeaf, plugin: ObcdPlugin) {
 		super(leaf);
 		this.plugin = plugin;
 	}
 
 	getViewType(): string {
-		return OBCARD_SIDEBAR_VIEW_TYPE;
+		return OBCD_SIDEBAR_VIEW_TYPE;
 	}
 
 	getDisplayText(): string {
@@ -57,7 +57,7 @@ export class CardSidebarView extends ItemView {
 
 	async onOpen(): Promise<void> {
 		this.contentEl.empty();
-		this.contentEl.addClass("obcard-sidebar-view");
+		this.contentEl.addClass("obcd-sidebar-view");
 
 		if (!this.actionsInitialized) {
 			this.addAction("refresh-cw", "Refresh flashcards", () => {
@@ -82,7 +82,7 @@ export class CardSidebarView extends ItemView {
 		const { contentEl } = this;
 		contentEl.empty();
 
-		const rootEl = contentEl.createDiv({ cls: "obcard-sidebar" });
+		const rootEl = contentEl.createDiv({ cls: "obcd-sidebar" });
 		const displayFile = state.displayFile;
 		this.syncInsertedSelection(displayFile?.path ?? null, state.existingCards);
 
@@ -148,48 +148,48 @@ export class CardSidebarView extends ItemView {
 	}
 
 	private renderGenerationProgress(containerEl: HTMLElement, progress: NonNullable<CardSidebarSnapshot["generationProgress"]>): void {
-		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-progress" });
-		const headerEl = sectionEl.createDiv({ cls: "obcard-sidebar-section-header" });
+		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-progress" });
+		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
 		headerEl.createEl("h4", {
-			cls: "obcard-sidebar-section-title",
+			cls: "obcd-sidebar-section-title",
 			text: "Generation progress",
 		});
 
-		const chipsEl = headerEl.createDiv({ cls: "obcard-sidebar-chips" });
+		const chipsEl = headerEl.createDiv({ cls: "obcd-sidebar-chips" });
 		chipsEl.createEl("span", {
-			cls: "obcard-sidebar-chip",
+			cls: "obcd-sidebar-chip",
 			text: this.getGenerationPhaseLabel(progress.phase),
 		});
 		chipsEl.createEl("span", {
-			cls: "obcard-sidebar-chip",
+			cls: "obcd-sidebar-chip",
 			text: `File ${progress.currentFileIndex}/${progress.totalFiles}`,
 		});
 		if (progress.totalChunks > 0) {
 			chipsEl.createEl("span", {
-				cls: "obcard-sidebar-chip",
+				cls: "obcd-sidebar-chip",
 				text: `Chunk ${Math.min(progress.currentChunkIndex, progress.totalChunks)}/${progress.totalChunks}`,
 			});
 		}
 
 		sectionEl.createEl("strong", {
-			cls: "obcard-sidebar-progress-title",
+			cls: "obcd-sidebar-progress-title",
 			text: progress.summary,
 		});
 		sectionEl.createEl("p", {
-			cls: "obcard-sidebar-path",
+			cls: "obcd-sidebar-path",
 			text: progress.filePath,
 		});
 		sectionEl.createEl("p", {
-			cls: "obcard-sidebar-note",
+			cls: "obcd-sidebar-note",
 			text: progress.detail,
 		});
 
-		const meterEl = sectionEl.createDiv({ cls: "obcard-sidebar-progress-meter" });
-		const trackEl = meterEl.createDiv({ cls: "obcard-sidebar-progress-track" });
-		const fillEl = trackEl.createDiv({ cls: "obcard-sidebar-progress-fill" });
+		const meterEl = sectionEl.createDiv({ cls: "obcd-sidebar-progress-meter" });
+		const trackEl = meterEl.createDiv({ cls: "obcd-sidebar-progress-track" });
+		const fillEl = trackEl.createDiv({ cls: "obcd-sidebar-progress-fill" });
 		fillEl.style.width = `${Math.round(progress.progress * 100)}%`;
 		meterEl.createEl("span", {
-			cls: "obcard-sidebar-progress-value",
+			cls: "obcd-sidebar-progress-value",
 			text: `${Math.round(progress.progress * 100)}%`,
 		});
 	}
@@ -206,39 +206,39 @@ export class CardSidebarView extends ItemView {
 			activeFileName: string;
 		},
 	): void {
-		const headerEl = containerEl.createDiv({ cls: "obcard-sidebar-header" });
+		const headerEl = containerEl.createDiv({ cls: "obcd-sidebar-header" });
 		headerEl.createEl("h3", {
-			cls: "obcard-sidebar-title",
+			cls: "obcd-sidebar-title",
 			text: state.name,
 		});
 		headerEl.createEl("p", {
-			cls: "obcard-sidebar-path",
+			cls: "obcd-sidebar-path",
 			text: state.path,
 		});
 
-		const chipsEl = headerEl.createDiv({ cls: "obcard-sidebar-chips" });
+		const chipsEl = headerEl.createDiv({ cls: "obcd-sidebar-chips" });
 		if (state.pendingCandidateCount > 0) {
 			chipsEl.createEl("span", {
-				cls: "obcard-sidebar-chip",
+				cls: "obcd-sidebar-chip",
 				text: `Awaiting insert ${state.approvedPendingCount}/${state.pendingCandidateCount}`,
 			});
 		}
 
 		chipsEl.createEl("span", {
-			cls: "obcard-sidebar-chip",
+			cls: "obcd-sidebar-chip",
 			text: `Inserted ${state.insertedCount}`,
 		});
 
 		if (state.isDetachedFromActiveFile && state.activeFileName.length > 0) {
 			headerEl.createEl("p", {
-				cls: "obcard-sidebar-note",
+				cls: "obcd-sidebar-note",
 				text: `Review stays pinned to this file. Current editor: ${state.activeFileName}.`,
 			});
 		}
 	}
 
 	private renderFilterBar(containerEl: HTMLElement): void {
-		const filterEl = containerEl.createDiv({ cls: "obcard-sidebar-filter" });
+		const filterEl = containerEl.createDiv({ cls: "obcd-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
 		search.setPlaceholder("Filter question, target, or metadata");
 		search.setValue(this.searchText);
@@ -247,7 +247,7 @@ export class CardSidebarView extends ItemView {
 			this.render();
 		});
 
-		const scopeEl = filterEl.createDiv({ cls: "obcard-sidebar-scope" });
+		const scopeEl = filterEl.createDiv({ cls: "obcd-sidebar-scope" });
 		this.createScopeButton(scopeEl, "All", "all");
 		this.createScopeButton(scopeEl, "Awaiting", "pending");
 		this.createScopeButton(scopeEl, "Inserted", "inserted");
@@ -261,24 +261,24 @@ export class CardSidebarView extends ItemView {
 				this.render();
 			});
 
-		button.buttonEl.addClass("obcard-sidebar-scope-button");
+		button.buttonEl.addClass("obcd-sidebar-scope-button");
 		if (this.filterScope === value) {
 			button.buttonEl.addClass("is-active");
 		}
 	}
 
 	private renderPendingSection(containerEl: HTMLElement, session: SidebarReviewSession): void {
-		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-section" });
+		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
 		sectionEl.createEl("h4", {
-			cls: "obcard-sidebar-section-title",
+			cls: "obcd-sidebar-section-title",
 			text: "Awaiting insert",
 		});
 		sectionEl.createEl("p", {
-			cls: "obcard-sidebar-note",
+			cls: "obcd-sidebar-note",
 			text: "These cards are generated candidates. They are not written into the note until you confirm insert.",
 		});
 
-		const actionsEl = sectionEl.createDiv({ cls: "obcard-sidebar-actions" });
+		const actionsEl = sectionEl.createDiv({ cls: "obcd-sidebar-actions" });
 		const isSubmitting = session.status === "submitting";
 		this.createActionButton(actionsEl, "Keep all", () => {
 			setAllReviewGroupsApproved(session.groups, true);
@@ -297,12 +297,12 @@ export class CardSidebarView extends ItemView {
 
 		if (isSubmitting) {
 			sectionEl.createEl("p", {
-				cls: "obcard-sidebar-note",
+				cls: "obcd-sidebar-note",
 				text: "Writing approved cards into the note...",
 			});
 		}
 
-		const listEl = sectionEl.createDiv({ cls: "obcard-sidebar-group-list" });
+		const listEl = sectionEl.createDiv({ cls: "obcd-sidebar-group-list" });
 		const filteredGroups = this.getFilteredPendingGroups(session.groups);
 
 		if (filteredGroups.length === 0) {
@@ -323,25 +323,25 @@ export class CardSidebarView extends ItemView {
 		},
 		isSubmitting: boolean,
 	): void {
-		const groupEl = containerEl.createDiv({ cls: "obcard-sidebar-card" });
-		const headerEl = groupEl.createDiv({ cls: "obcard-sidebar-card-header" });
-		const headingEl = headerEl.createDiv({ cls: "obcard-sidebar-card-heading" });
+		const groupEl = containerEl.createDiv({ cls: "obcd-sidebar-card" });
+		const headerEl = groupEl.createDiv({ cls: "obcd-sidebar-card-header" });
+		const headingEl = headerEl.createDiv({ cls: "obcd-sidebar-card-heading" });
 		headingEl.createEl("strong", {
 			text: group.group.chunk.titleHint ?? group.group.chunk.file.basename,
 		});
 		headingEl.createEl("span", {
-			cls: "obcard-sidebar-chip",
+			cls: "obcd-sidebar-chip",
 			text: `${group.candidates.filter((candidate) => candidate.approved).length}/${group.candidates.length}`,
 		});
 
 		if (group.group.chunk.headingPath.length > 1) {
 			groupEl.createEl("p", {
-				cls: "obcard-sidebar-subtle",
+				cls: "obcd-sidebar-subtle",
 				text: group.group.chunk.headingPath.join(" > "),
 			});
 		}
 
-		const groupActionsEl = headerEl.createDiv({ cls: "obcard-sidebar-actions" });
+		const groupActionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
 		this.createActionButton(groupActionsEl, "Keep section", () => {
 			setReviewGroupApproved([group.group], group.group.chunk.sectionKey, true);
 			this.render();
@@ -351,18 +351,18 @@ export class CardSidebarView extends ItemView {
 			this.render();
 		}, { disabled: isSubmitting });
 
-		const previewDetails = groupEl.createEl("details", { cls: "obcard-sidebar-preview" });
+		const previewDetails = groupEl.createEl("details", { cls: "obcd-sidebar-preview" });
 		previewDetails.createEl("summary", {
 			text: "Source preview",
 		});
 		previewDetails.createEl("div", {
-			cls: "obcard-sidebar-preview-body",
+			cls: "obcd-sidebar-preview-body",
 			text: group.group.sourcePreview,
 		});
 
 		for (const candidate of group.candidates) {
-			const cardEl = groupEl.createDiv({ cls: "obcard-sidebar-field" });
-			const cardHeaderEl = cardEl.createDiv({ cls: "obcard-sidebar-card-header" });
+			const cardEl = groupEl.createDiv({ cls: "obcd-sidebar-field" });
+			const cardHeaderEl = cardEl.createDiv({ cls: "obcd-sidebar-card-header" });
 			const checkboxEl = cardHeaderEl.createEl("input", {
 				attr: {
 					type: "checkbox",
@@ -398,16 +398,16 @@ export class CardSidebarView extends ItemView {
 		cards: ExistingCardEntry[],
 		state: CardSidebarSnapshot,
 	): void {
-		const sectionEl = containerEl.createDiv({ cls: "obcard-sidebar-section" });
-		const headerEl = sectionEl.createDiv({ cls: "obcard-sidebar-section-header" });
+		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
+		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
 		headerEl.createEl("h4", {
-			cls: "obcard-sidebar-section-title",
+			cls: "obcd-sidebar-section-title",
 			text: "Inserted cards",
 		});
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
-		const actionsEl = headerEl.createDiv({ cls: "obcard-sidebar-actions" });
+		const actionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
 
 		if (selectedCount > 0) {
 			this.createActionButton(actionsEl, "Select all visible", () => {
@@ -434,7 +434,7 @@ export class CardSidebarView extends ItemView {
 		this.renderColumnSettings(sectionEl, state.isMutating);
 
 		sectionEl.createEl("p", {
-			cls: "obcard-sidebar-note",
+			cls: "obcd-sidebar-note",
 			text: selectedCount > 0
 				? `${selectedCount} card${selectedCount === 1 ? "" : "s"} selected. Click a card row to locate it in the note.`
 				: "Click a card row to locate it in the note. Select checkboxes to show bulk actions.",
@@ -449,7 +449,7 @@ export class CardSidebarView extends ItemView {
 	}
 
 	private renderColumnSettings(sectionEl: HTMLElement, isMutating: boolean): void {
-		const detailsEl = sectionEl.createEl("details", { cls: "obcard-sidebar-column-settings" });
+		const detailsEl = sectionEl.createEl("details", { cls: "obcd-sidebar-column-settings" });
 		detailsEl.open = this.isColumnSettingsExpanded;
 		detailsEl.addEventListener("toggle", () => {
 			this.isColumnSettingsExpanded = detailsEl.open;
@@ -458,10 +458,10 @@ export class CardSidebarView extends ItemView {
 			text: "Visible columns",
 		});
 
-		const optionsEl = detailsEl.createDiv({ cls: "obcard-sidebar-column-options" });
+		const optionsEl = detailsEl.createDiv({ cls: "obcd-sidebar-column-options" });
 		for (const column of SIDEBAR_TABLE_COLUMNS) {
 			const optionEl = optionsEl.createEl("label", {
-				cls: "obcard-sidebar-column-option",
+				cls: "obcd-sidebar-column-option",
 				attr: {
 					title: column.description,
 				},
@@ -488,12 +488,12 @@ export class CardSidebarView extends ItemView {
 		isMutating: boolean,
 	): void {
 		const visibleColumns = this.getVisibleInsertedColumns();
-		const tableWrapperEl = containerEl.createDiv({ cls: "obcard-sidebar-table-wrapper" });
-		const tableEl = tableWrapperEl.createEl("table", { cls: "obcard-sidebar-table" });
+		const tableWrapperEl = containerEl.createDiv({ cls: "obcd-sidebar-table-wrapper" });
+		const tableEl = tableWrapperEl.createEl("table", { cls: "obcd-sidebar-table" });
 		const tableHeadEl = tableEl.createEl("thead");
 		const headerRowEl = tableHeadEl.createEl("tr");
 
-		const selectAllCell = headerRowEl.createEl("th", { cls: "obcard-sidebar-table-select-cell" });
+		const selectAllCell = headerRowEl.createEl("th", { cls: "obcd-sidebar-table-select-cell" });
 		const selectAllCheckbox = selectAllCell.createEl("input", {
 			attr: {
 				type: "checkbox",
@@ -530,7 +530,7 @@ export class CardSidebarView extends ItemView {
 
 		const tableBodyEl = tableEl.createEl("tbody");
 		for (const card of cards) {
-			const rowEl = tableBodyEl.createEl("tr", { cls: "obcard-sidebar-table-row" });
+			const rowEl = tableBodyEl.createEl("tr", { cls: "obcd-sidebar-table-row" });
 			rowEl.addClass("is-selectable");
 			rowEl.tabIndex = 0;
 			rowEl.setAttr("aria-selected", this.selectedInsertedCardIds.has(card.id) ? "true" : "false");
@@ -539,7 +539,7 @@ export class CardSidebarView extends ItemView {
 			}
 			this.bindInsertedRowInteraction(rowEl, card, isMutating);
 
-			const selectionCell = rowEl.createEl("td", { cls: "obcard-sidebar-table-select-cell" });
+			const selectionCell = rowEl.createEl("td", { cls: "obcd-sidebar-table-select-cell" });
 			const checkboxEl = selectionCell.createEl("input", {
 				attr: {
 					type: "checkbox",
@@ -561,7 +561,7 @@ export class CardSidebarView extends ItemView {
 				rowEl,
 				makePreview(card.front, this.plugin.settings.sidebar.frontPreviewLength),
 				card.front,
-				"obcard-sidebar-table-question",
+				"obcd-sidebar-table-question",
 			);
 
 			for (const column of visibleColumns) {
@@ -615,7 +615,7 @@ export class CardSidebarView extends ItemView {
 
 		cellEl.setAttr("title", title);
 		cellEl.createEl("span", {
-			cls: "obcard-sidebar-table-text",
+			cls: "obcd-sidebar-table-text",
 			text,
 		});
 	}
@@ -718,15 +718,15 @@ export class CardSidebarView extends ItemView {
 		disabled: boolean,
 		onChange: (value: string) => void,
 	): void {
-		const fieldEl = containerEl.createDiv({ cls: "obcard-sidebar-field" });
+		const fieldEl = containerEl.createDiv({ cls: "obcd-sidebar-field" });
 		fieldEl.createEl("label", {
-			cls: "obcard-sidebar-label",
+			cls: "obcd-sidebar-label",
 			text: label,
 		});
 
 		const textArea = new TextAreaComponent(fieldEl);
 		textArea.inputEl.rows = rows;
-		textArea.inputEl.addClass("obcard-sidebar-textarea");
+		textArea.inputEl.addClass("obcd-sidebar-textarea");
 		textArea.setDisabled(disabled);
 		textArea
 			.setValue(value)
@@ -740,14 +740,14 @@ export class CardSidebarView extends ItemView {
 		disabled: boolean,
 		onChange: (value: string) => void,
 	): void {
-		const fieldEl = containerEl.createDiv({ cls: "obcard-sidebar-field" });
+		const fieldEl = containerEl.createDiv({ cls: "obcd-sidebar-field" });
 		fieldEl.createEl("label", {
-			cls: "obcard-sidebar-label",
+			cls: "obcd-sidebar-label",
 			text: label,
 		});
 
 		const text = new TextComponent(fieldEl);
-		text.inputEl.addClass("obcard-sidebar-input");
+		text.inputEl.addClass("obcd-sidebar-input");
 		text.setDisabled(disabled);
 		text
 			.setValue(value)
@@ -793,8 +793,9 @@ export class CardSidebarView extends ItemView {
 
 	private renderEmptyState(containerEl: HTMLElement, message: string): void {
 		containerEl.createEl("p", {
-			cls: "obcard-sidebar-empty",
+			cls: "obcd-sidebar-empty",
 			text: message,
 		});
 	}
 }
+

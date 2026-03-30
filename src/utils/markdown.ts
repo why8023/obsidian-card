@@ -1,5 +1,3 @@
-import { expandRangeToIncludeObarCustomNote } from "../obarCompatibility";
-
 export interface HeadingInfo {
 	level: number;
 	title: string;
@@ -12,9 +10,6 @@ interface LineInfo {
 	start: number;
 	end: number;
 }
-
-const OBCARD_SECTION_START_PREFIX = "<!-- obcard-section:start";
-const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
 
 export function detectNewline(content: string): string {
 	return content.includes("\r\n") ? "\r\n" : "\n";
@@ -184,106 +179,6 @@ export function hashContent(value: string): string {
 	}
 
 	return `fnv1a:${hash.toString(16).padStart(8, "0")}`;
-}
-
-export function collectObsidianCardBlocks(content: string): Array<{
-	metadata: {
-		sectionKey: string;
-		headingPath: string[];
-		sourceHash: string;
-		kind: "selection" | "heading" | "preamble";
-	};
-	range: {
-		from: number;
-		to: number;
-	};
-}> {
-	const blocks: Array<{
-		metadata: {
-			sectionKey: string;
-			headingPath: string[];
-			sourceHash: string;
-			kind: "selection" | "heading" | "preamble";
-		};
-		range: {
-			from: number;
-			to: number;
-		};
-	}> = [];
-
-	let searchOffset = 0;
-
-	while (searchOffset < content.length) {
-		const startIndex = content.indexOf(OBCARD_SECTION_START_PREFIX, searchOffset);
-		if (startIndex === -1) {
-			break;
-		}
-
-		const startCommentEnd = content.indexOf("-->", startIndex);
-		if (startCommentEnd === -1) {
-			break;
-		}
-
-		const startComment = content.slice(startIndex, startCommentEnd + 3);
-		const metadata = parseCardBlockMetadata(startComment);
-		if (metadata === null) {
-			searchOffset = startCommentEnd + 3;
-			continue;
-		}
-
-		const endIndex = content.indexOf(OBCARD_SECTION_END_MARKER, startCommentEnd + 3);
-		if (endIndex === -1) {
-			break;
-		}
-
-		const innerRange = {
-			from: startIndex,
-			to: endIndex + OBCARD_SECTION_END_MARKER.length,
-		};
-
-		blocks.push({
-			metadata,
-			range: expandRangeToIncludeObarCustomNote(content, innerRange),
-		});
-
-		searchOffset = blocks[blocks.length - 1]?.range.to ?? innerRange.to;
-	}
-
-	return blocks;
-}
-
-function parseCardBlockMetadata(comment: string): {
-	sectionKey: string;
-	headingPath: string[];
-	sourceHash: string;
-	kind: "selection" | "heading" | "preamble";
-} | null {
-	const match = comment.match(/^<!--\s*obcard-section:start\s+([\s\S]+?)\s*-->$/);
-	const rawPayload = match?.[1];
-	if (!rawPayload) {
-		return null;
-	}
-
-	try {
-		const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
-		const sectionKey = typeof parsed.sectionKey === "string" ? parsed.sectionKey : "";
-		const sourceHash = typeof parsed.sourceHash === "string" ? parsed.sourceHash : "";
-		const kind = parsed.kind;
-		if (sectionKey.length === 0 || sourceHash.length === 0 || (kind !== "selection" && kind !== "heading" && kind !== "preamble")) {
-			return null;
-		}
-
-		return {
-			sectionKey,
-			headingPath: Array.isArray(parsed.headingPath)
-				? parsed.headingPath.filter((entry): entry is string => typeof entry === "string")
-				: [],
-			sourceHash,
-			kind,
-		};
-	} catch {
-		return null;
-	}
 }
 
 function getLineInfos(content: string): LineInfo[] {

@@ -1,9 +1,9 @@
 import type { TFile } from "obsidian";
 
 import type { ContentChunk, TextRange } from "../types";
+import { collectGeneratedCardBlocks } from "../utils/generatedCardBlocks";
 import {
 	collectMarkdownHeadings,
-	collectObsidianCardBlocks,
 	findFrontmatterEnd,
 	hashContent,
 	sliceWithoutRanges,
@@ -42,7 +42,7 @@ export function buildSelectionChunks(file: TFile, selectedText: string, range: T
 export function buildFileChunks(file: TFile, content: string, options: BuildFileChunksOptions = {}): ContentChunk[] {
 	const contentStart = findFrontmatterEnd(content);
 	const headings = collectMarkdownHeadings(content).filter((heading) => heading.from >= contentStart);
-	const cardBlocks = collectObsidianCardBlocks(content);
+	const cardBlocks = collectGeneratedCardBlocks(content);
 	const blockRanges = cardBlocks.map((block) => block.range);
 	const coveredSections = new Map<string, string>();
 

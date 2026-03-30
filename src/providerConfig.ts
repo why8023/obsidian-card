@@ -107,7 +107,7 @@ export function getProviderHeaders(provider: FlashcardProvider): Record<string, 
 
 	if (provider.presetType === "openrouter") {
 		headers["HTTP-Referer"] = "https://obsidian.md";
-		headers["X-Title"] = "OBCARD";
+		headers["X-Title"] = "OBCD";
 	}
 
 	return headers;
@@ -116,38 +116,6 @@ export function getProviderHeaders(provider: FlashcardProvider): Record<string, 
 export function getDefaultModelForPreset(presetType: FlashcardProviderPresetType): string {
 	return PROVIDER_PRESET_INFO[presetType].defaultModel;
 }
-
-export function inferPresetTypeFromBaseUrl(baseUrl: string): FlashcardProviderPresetType {
-	const normalizedBaseUrl = normalizeBaseUrl(baseUrl).toLowerCase();
-
-	if (normalizedBaseUrl.includes("11434")) {
-		return "ollama";
-	}
-
-	if (normalizedBaseUrl.includes("1234")) {
-		return "lm-studio";
-	}
-
-	if (normalizedBaseUrl.includes("openrouter.ai")) {
-		return "openrouter";
-	}
-
-	if (normalizedBaseUrl.includes("api.openai.com")) {
-		return "openai";
-	}
-
-	return "openai-compatible";
-}
-
-export function normalizeLegacyEndpoint(value: string): string {
-	const trimmedValue = value.trim();
-	if (trimmedValue.length === 0) {
-		return trimmedValue;
-	}
-
-	return normalizeBaseUrl(trimmedValue);
-}
-
 function normalizeBaseUrl(value: string): string {
 	return value
 		.trim()

@@ -2,13 +2,13 @@ import { Plugin } from "obsidian";
 
 import { registerCommands } from "./commands";
 import { DebugService } from "./debug/debugService";
-import { ObsidianCardSettingTab, createDefaultSettings, parseSettings, type ObsidianCardSettings } from "./settings";
-import { CardSidebarController, OBCARD_SIDEBAR_VIEW_TYPE } from "./ui/cardSidebarController";
+import { ObcdSettingTab, createDefaultSettings, parseSettings, type ObcdSettings } from "./settings";
+import { CardSidebarController, OBCD_SIDEBAR_VIEW_TYPE } from "./ui/cardSidebarController";
 import { CardSidebarView } from "./ui/cardSidebarView";
 import { FlashcardWorkflow } from "./workflow/cardWorkflow";
 
-export default class ObsidianCardPlugin extends Plugin {
-	settings: ObsidianCardSettings = createDefaultSettings();
+export default class ObcdPlugin extends Plugin {
+	settings: ObcdSettings = createDefaultSettings();
 	debug!: DebugService;
 	sidebar!: CardSidebarController;
 	workflow!: FlashcardWorkflow;
@@ -19,14 +19,10 @@ export default class ObsidianCardPlugin extends Plugin {
 		this.debug = new DebugService(this);
 		this.sidebar = new CardSidebarController(this);
 		this.workflow = new FlashcardWorkflow(this);
-		this.registerView(OBCARD_SIDEBAR_VIEW_TYPE, (leaf) => new CardSidebarView(leaf, this));
+		this.registerView(OBCD_SIDEBAR_VIEW_TYPE, (leaf) => new CardSidebarView(leaf, this));
 
 		registerCommands(this);
-		this.addSettingTab(new ObsidianCardSettingTab(this.app, this));
-	}
-
-	onunload(): void {
-		this.app.workspace.detachLeavesOfType(OBCARD_SIDEBAR_VIEW_TYPE);
+		this.addSettingTab(new ObcdSettingTab(this.app, this));
 	}
 
 	async loadSettings(): Promise<void> {

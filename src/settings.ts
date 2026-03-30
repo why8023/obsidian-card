@@ -1,7 +1,7 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 
 import { getDebugArtifactsDirectory } from "./debug/debugService";
-import type ObsidianCardPlugin from "./main";
+import type ObcdPlugin from "./main";
 import {
 	DEFAULT_OBAR_FRONTMATTER_KEYS,
 	normalizeObarFrontmatterKeys,
@@ -12,8 +12,6 @@ import {
 	getActiveProvider,
 	getDefaultModelForPreset,
 	getProviderChatCompletionsUrl,
-	inferPresetTypeFromBaseUrl,
-	normalizeLegacyEndpoint,
 	type FlashcardProvider,
 	type FlashcardProviderPresetType,
 } from "./providerConfig";
@@ -24,7 +22,7 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 6;
+const SETTINGS_SCHEMA_VERSION = 7;
 
 export interface FlashcardGenerationSettings {
 	model: string;
@@ -32,52 +30,44 @@ export interface FlashcardGenerationSettings {
 	temperature: number;
 }
 
-export interface ObsidianCardDebugSettings {
+export interface ObcdDebugSettings {
 	enabled: boolean;
 }
 
-export interface ObsidianCardSidebarSettings {
+export interface ObcdSidebarSettings {
 	frontPreviewLength: number;
 	visibleTableColumns: SidebarTableColumnId[];
 }
 
-export interface ObsidianCardObarCompatibilitySettings {
+export interface ObcdObarCompatibilitySettings {
 	enabled: boolean;
 	frontmatterKeys: string[];
 }
 
-export interface ObsidianCardCompatibilitySettings {
-	obar: ObsidianCardObarCompatibilitySettings;
+export interface ObcdCompatibilitySettings {
+	obar: ObcdObarCompatibilitySettings;
 }
 
-export interface ObsidianCardFolderPromptRule {
+export interface ObcdFolderPromptRule {
 	noteFolder: string;
 	templatePath: string;
 }
 
-export interface ObsidianCardPromptSettings {
+export interface ObcdPromptSettings {
 	globalPrompt: string;
 	templatesFolder: string;
-	folderRules: ObsidianCardFolderPromptRule[];
+	folderRules: ObcdFolderPromptRule[];
 }
 
-export interface ObsidianCardSettings {
+export interface ObcdSettings {
 	version: number;
 	providers: FlashcardProvider[];
 	activeProviderId: string;
 	generation: FlashcardGenerationSettings;
-	prompts: ObsidianCardPromptSettings;
-	sidebar: ObsidianCardSidebarSettings;
-	compatibility: ObsidianCardCompatibilitySettings;
-	debug: ObsidianCardDebugSettings;
-}
-
-interface LegacySettings {
-	apiEndpoint?: unknown;
-	apiKey?: unknown;
-	model?: unknown;
-	maxCardsPerChunk?: unknown;
-	temperature?: unknown;
+	prompts: ObcdPromptSettings;
+	sidebar: ObcdSidebarSettings;
+	compatibility: ObcdCompatibilitySettings;
+	debug: ObcdDebugSettings;
 }
 
 export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
@@ -86,27 +76,31 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	temperature: 0.2,
 };
 
-export const DEFAULT_SIDEBAR_SETTINGS: ObsidianCardSidebarSettings = {
+export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
 	frontPreviewLength: 72,
 	visibleTableColumns: ["target"],
 };
 
-export const DEFAULT_PROMPT_SETTINGS: ObsidianCardPromptSettings = {
+export const DEFAULT_PROMPT_SETTINGS: ObcdPromptSettings = {
 	globalPrompt: "",
 	templatesFolder: "",
 	folderRules: [],
 };
 
-export const DEFAULT_COMPATIBILITY_SETTINGS: ObsidianCardCompatibilitySettings = {
+export const DEFAULT_DEBUG_SETTINGS: ObcdDebugSettings = {
+	enabled: false,
+};
+
+export const DEFAULT_COMPATIBILITY_SETTINGS: ObcdCompatibilitySettings = {
 	obar: {
 		enabled: false,
 		frontmatterKeys: [...DEFAULT_OBAR_FRONTMATTER_KEYS],
 	},
 };
 
-export const DEFAULT_SETTINGS: ObsidianCardSettings = createDefaultSettings();
+export const DEFAULT_SETTINGS: ObcdSettings = createDefaultSettings();
 
-export function createDefaultSettings(): ObsidianCardSettings {
+export function createDefaultSettings(): ObcdSettings {
 	return {
 		version: SETTINGS_SCHEMA_VERSION,
 		providers: [createDefaultProvider("openrouter")],
@@ -120,6 +114,7 @@ export function createDefaultSettings(): ObsidianCardSettings {
 		},
 		sidebar: {
 			...DEFAULT_SIDEBAR_SETTINGS,
+			visibleTableColumns: [...DEFAULT_SIDEBAR_SETTINGS.visibleTableColumns],
 		},
 		compatibility: {
 			obar: {
@@ -128,27 +123,38 @@ export function createDefaultSettings(): ObsidianCardSettings {
 			},
 		},
 		debug: {
-			enabled: false,
+			...DEFAULT_DEBUG_SETTINGS,
 		},
 	};
 }
 
-export function parseSettings(data: unknown): ObsidianCardSettings {
-	if (!isRecord(data) || Object.keys(data).length === 0) {
-		return createDefaultSettings();
+export function parseSettings(data: unknown): ObcdSettings {
+	const defaults = createDefaultSettings();
+	if (!isRecord(data)) {
+		return defaults;
 	}
 
-	if (Array.isArray(data.providers) || isRecord(data.generation)) {
-		return parseCurrentSettings(data);
-	}
+	const providers = parseProviders(data.providers, defaults.providers);
+	const activeProviderId = typeof data.activeProviderId === "string" && providers.some((provider) => provider.id === data.activeProviderId)
+		? data.activeProviderId
+		: providers[0]?.id ?? defaults.activeProviderId;
 
-	return parseLegacySettings(data as LegacySettings);
+	return {
+		version: SETTINGS_SCHEMA_VERSION,
+		providers,
+		activeProviderId,
+		generation: parseGenerationSettings(data.generation, defaults.generation),
+		prompts: parsePromptSettings(data.prompts, defaults.prompts),
+		sidebar: parseSidebarSettings(data.sidebar, defaults.sidebar),
+		compatibility: parseCompatibilitySettings(data.compatibility, defaults.compatibility),
+		debug: parseDebugSettings(data.debug, defaults.debug),
+	};
 }
 
-export class ObsidianCardSettingTab extends PluginSettingTab {
-	plugin: ObsidianCardPlugin;
+export class ObcdSettingTab extends PluginSettingTab {
+	plugin: ObcdPlugin;
 
-	constructor(app: App, plugin: ObsidianCardPlugin) {
+	constructor(app: App, plugin: ObcdPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -167,7 +173,7 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		containerEl.createEl("p", {
-			cls: "obcard-settings-hint",
+			cls: "obcd-settings-hint",
 			text: presetInfo.description,
 		});
 
@@ -184,16 +190,15 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						const currentProvider = getActiveProvider(this.plugin.settings);
 						const nextPresetType = value as FlashcardProviderPresetType;
-						const previousPresetType = currentProvider.presetType;
-						const previousDefaultModel = getDefaultModelForPreset(previousPresetType);
+						const previousDefaultModel = getDefaultModelForPreset(currentProvider.presetType);
 						const nextDefaultModel = getDefaultModelForPreset(nextPresetType);
-						const nextProvider = {
+
+						this.updateActiveProvider({
 							...currentProvider,
 							presetType: nextPresetType,
 							baseUrl: PROVIDER_PRESET_INFO[nextPresetType].defaultBaseUrl,
-						};
+						});
 
-						this.updateActiveProvider(nextProvider);
 						if (this.plugin.settings.generation.model.trim().length === 0 || this.plugin.settings.generation.model === previousDefaultModel) {
 							this.plugin.settings.generation.model = nextDefaultModel;
 						}
@@ -210,9 +215,8 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 				.setPlaceholder(PROVIDER_PRESET_INFO[activeProvider.presetType].defaultBaseUrl)
 				.setValue(activeProvider.baseUrl)
 				.onChange(async (value) => {
-					const currentProvider = getActiveProvider(this.plugin.settings);
 					this.updateActiveProvider({
-						...currentProvider,
+						...getActiveProvider(this.plugin.settings),
 						baseUrl: value.trim(),
 					});
 					await this.plugin.saveSettings();
@@ -229,9 +233,8 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 					.setPlaceholder("Enter access key")
 					.setValue(activeProvider.apiKey)
 					.onChange(async (value) => {
-						const currentProvider = getActiveProvider(this.plugin.settings);
 						this.updateActiveProvider({
-							...currentProvider,
+							...getActiveProvider(this.plugin.settings),
 							apiKey: value.trim(),
 						});
 						await this.plugin.saveSettings();
@@ -326,7 +329,7 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 			});
 
 		containerEl.createEl("p", {
-			cls: "obcard-settings-hint",
+			cls: "obcd-settings-hint",
 			text: this.describePromptTemplateState(templateOptions),
 		});
 
@@ -346,7 +349,7 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 
 		if (this.plugin.settings.prompts.folderRules.length === 0) {
 			containerEl.createEl("p", {
-				cls: "obcard-settings-hint",
+				cls: "obcd-settings-hint",
 				text: "No folder prompt rules yet.",
 			});
 		}
@@ -396,7 +399,7 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Sidebar")
-			.setDesc("Display settings for the inserted flashcard table in the sidebar.")
+			.setDesc("Display settings for the inserted flashcards table in the sidebar.")
 			.setHeading();
 
 		new Setting(containerEl)
@@ -465,11 +468,9 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 	}
 
 	private updateActiveProvider(provider: FlashcardProvider): void {
-		const providers = this.plugin.settings.providers.map((currentProvider) => (
+		this.plugin.settings.providers = this.plugin.settings.providers.map((currentProvider) => (
 			currentProvider.id === provider.id ? provider : currentProvider
 		));
-
-		this.plugin.settings.providers = providers;
 	}
 
 	private describePromptTemplateState(templateOptions: string[]): string {
@@ -485,7 +486,7 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 		return `${templateOptions.length} prompt template${templateOptions.length === 1 ? "" : "s"} available in ${templatesFolder}.`;
 	}
 
-	private async updateFolderPromptRule(index: number, update: Partial<ObsidianCardFolderPromptRule>): Promise<void> {
+	private async updateFolderPromptRule(index: number, update: Partial<ObcdFolderPromptRule>): Promise<void> {
 		this.plugin.settings.prompts.folderRules = this.plugin.settings.prompts.folderRules.map((rule, currentIndex) => (
 			currentIndex === index
 				? {
@@ -498,74 +499,63 @@ export class ObsidianCardSettingTab extends PluginSettingTab {
 	}
 }
 
-function parseCurrentSettings(data: Record<string, unknown>): ObsidianCardSettings {
-	const defaults = createDefaultSettings();
-	const parsedProviders = Array.isArray(data.providers)
-		? data.providers
-			.map((provider, index) => parseProvider(provider, index))
-			.filter((provider): provider is FlashcardProvider => provider !== null)
-		: [];
+function parseProviders(value: unknown, fallback: FlashcardProvider[]): FlashcardProvider[] {
+	if (!Array.isArray(value)) {
+		return fallback.map(cloneProvider);
+	}
 
-	const providers = parsedProviders.length > 0 ? parsedProviders : defaults.providers.map(cloneProvider);
-	const generationSource = isRecord(data.generation) ? data.generation : {};
-	const activeProviderId = typeof data.activeProviderId === "string" && providers.some((provider) => provider.id === data.activeProviderId)
-		? data.activeProviderId
-		: providers[0]?.id ?? defaults.activeProviderId;
+	const providers = value
+		.map((entry, index) => parseProvider(entry, index))
+		.filter((provider): provider is FlashcardProvider => provider !== null);
+
+	return providers.length > 0 ? providers : fallback.map(cloneProvider);
+}
+
+function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSettings): FlashcardGenerationSettings {
+	const generationSource = isRecord(value) ? value : {};
 
 	return {
-		version: SETTINGS_SCHEMA_VERSION,
-		providers,
-		activeProviderId,
-		generation: {
-			model: readString(generationSource.model, defaults.generation.model),
-			maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, defaults.generation.maxCardsPerChunk, { min: 1, max: 20 }),
-			temperature: readNumber(generationSource.temperature, defaults.generation.temperature, { min: 0, max: 2 }),
-		},
-		prompts: parsePromptSettings(data.prompts, defaults.prompts),
-		sidebar: parseSidebarSettings(data.sidebar, defaults.sidebar),
-		compatibility: parseCompatibilitySettings(data.compatibility, defaults.compatibility),
-		debug: {
-			enabled: readBoolean(data.debugEnabled, readBoolean(isRecord(data.debug) ? data.debug.enabled : undefined, defaults.debug.enabled)),
-		},
+		model: readString(generationSource.model, fallback.model),
+		maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 }),
+		temperature: readNumber(generationSource.temperature, fallback.temperature, { min: 0, max: 2 }),
 	};
 }
 
-function parseLegacySettings(data: LegacySettings): ObsidianCardSettings {
-	const defaults = createDefaultSettings();
-	const legacyEndpoint = readString(data.apiEndpoint, defaults.providers[0]?.baseUrl ?? "");
-	const resolvedBaseUrl = legacyEndpoint.length > 0
-		? normalizeLegacyEndpoint(legacyEndpoint)
-		: defaults.providers[0]?.baseUrl ?? "";
-	const presetType = resolvedBaseUrl.length > 0 ? inferPresetTypeFromBaseUrl(resolvedBaseUrl) : "openrouter";
-	const provider = createDefaultProvider(presetType);
-
-	provider.baseUrl = resolvedBaseUrl.length > 0 ? resolvedBaseUrl : provider.baseUrl;
-	provider.apiKey = readString(data.apiKey, "");
+function parsePromptSettings(value: unknown, fallback: ObcdPromptSettings): ObcdPromptSettings {
+	const promptSource = isRecord(value) ? value : {};
 
 	return {
-		version: SETTINGS_SCHEMA_VERSION,
-		providers: [provider],
-		activeProviderId: provider.id,
-		generation: {
-			model: readString(data.model, getDefaultModelForPreset(provider.presetType)),
-			maxCardsPerChunk: readNumber(data.maxCardsPerChunk, defaults.generation.maxCardsPerChunk, { min: 1, max: 20 }),
-			temperature: readNumber(data.temperature, defaults.generation.temperature, { min: 0, max: 2 }),
-		},
-		prompts: {
-			...defaults.prompts,
-			folderRules: [],
-		},
-		sidebar: {
-			...defaults.sidebar,
-		},
-		compatibility: {
-			obar: {
-				...defaults.compatibility.obar,
-				frontmatterKeys: [...defaults.compatibility.obar.frontmatterKeys],
-			},
-		},
-		debug: {
-			enabled: defaults.debug.enabled,
+		globalPrompt: readString(promptSource.globalPrompt, fallback.globalPrompt),
+		templatesFolder: normalizeConfiguredFolderPath(readString(promptSource.templatesFolder, fallback.templatesFolder)),
+		folderRules: parseFolderPromptRules(promptSource.folderRules),
+	};
+}
+
+function parseSidebarSettings(value: unknown, fallback: ObcdSidebarSettings): ObcdSidebarSettings {
+	const sidebarSource = isRecord(value) ? value : {};
+
+	return {
+		frontPreviewLength: readNumber(sidebarSource.frontPreviewLength, fallback.frontPreviewLength, { min: 20, max: 200 }),
+		visibleTableColumns: readSidebarColumns(sidebarSource.visibleTableColumns, fallback.visibleTableColumns),
+	};
+}
+
+function parseDebugSettings(value: unknown, fallback: ObcdDebugSettings): ObcdDebugSettings {
+	const debugSource = isRecord(value) ? value : {};
+
+	return {
+		enabled: readBoolean(debugSource.enabled, fallback.enabled),
+	};
+}
+
+function parseCompatibilitySettings(value: unknown, fallback: ObcdCompatibilitySettings): ObcdCompatibilitySettings {
+	const compatibilitySource = isRecord(value) ? value : {};
+	const obarSource = isRecord(compatibilitySource.obar) ? compatibilitySource.obar : {};
+
+	return {
+		obar: {
+			enabled: readBoolean(obarSource.enabled, fallback.obar.enabled),
+			frontmatterKeys: normalizeObarFrontmatterKeys(obarSource.frontmatterKeys, fallback.obar.frontmatterKeys),
 		},
 	};
 }
@@ -620,37 +610,6 @@ function readBoolean(value: unknown, fallback: boolean): boolean {
 	return typeof value === "boolean" ? value : fallback;
 }
 
-function parsePromptSettings(value: unknown, fallback: ObsidianCardPromptSettings): ObsidianCardPromptSettings {
-	const promptSource = isRecord(value) ? value : {};
-
-	return {
-		globalPrompt: readString(promptSource.globalPrompt, fallback.globalPrompt),
-		templatesFolder: normalizeConfiguredFolderPath(readString(promptSource.templatesFolder, fallback.templatesFolder)),
-		folderRules: parseFolderPromptRules(promptSource.folderRules),
-	};
-}
-
-function parseSidebarSettings(value: unknown, fallback: ObsidianCardSidebarSettings): ObsidianCardSidebarSettings {
-	const sidebarSource = isRecord(value) ? value : {};
-
-	return {
-		frontPreviewLength: readNumber(sidebarSource.frontPreviewLength, fallback.frontPreviewLength, { min: 20, max: 200 }),
-		visibleTableColumns: readSidebarColumns(sidebarSource.visibleTableColumns, fallback.visibleTableColumns),
-	};
-}
-
-function parseCompatibilitySettings(value: unknown, fallback: ObsidianCardCompatibilitySettings): ObsidianCardCompatibilitySettings {
-	const compatibilitySource = isRecord(value) ? value : {};
-	const obarSource = isRecord(compatibilitySource.obar) ? compatibilitySource.obar : {};
-
-	return {
-		obar: {
-			enabled: readBoolean(obarSource.enabled, fallback.obar.enabled),
-			frontmatterKeys: normalizeObarFrontmatterKeys(obarSource.frontmatterKeys, fallback.obar.frontmatterKeys),
-		},
-	};
-}
-
 function readSidebarColumns(value: unknown, fallback: SidebarTableColumnId[]): SidebarTableColumnId[] {
 	if (!Array.isArray(value)) {
 		return [...fallback];
@@ -663,28 +622,29 @@ function readSidebarColumns(value: unknown, fallback: SidebarTableColumnId[]): S
 		.filter((entry, index, items) => items.indexOf(entry) === index);
 }
 
-function parseFolderPromptRules(value: unknown): ObsidianCardFolderPromptRule[] {
+function parseFolderPromptRules(value: unknown): ObcdFolderPromptRule[] {
 	if (!Array.isArray(value)) {
 		return [];
 	}
 
 	return value
 		.map((entry) => parseFolderPromptRule(entry))
-		.filter((entry): entry is ObsidianCardFolderPromptRule => entry !== null);
+		.filter((entry): entry is ObcdFolderPromptRule => entry !== null);
 }
 
-function parseFolderPromptRule(value: unknown): ObsidianCardFolderPromptRule | null {
+function parseFolderPromptRule(value: unknown): ObcdFolderPromptRule | null {
 	if (!isRecord(value)) {
 		return null;
 	}
 
-	const noteFolder = normalizeConfiguredFolderPath(readString(value.noteFolder, ""));
-	const templatePath = normalizeConfiguredTemplatePath(readString(value.templatePath, ""));
-
 	return {
-		noteFolder,
-		templatePath,
+		noteFolder: normalizeConfiguredFolderPath(readString(value.noteFolder, "")),
+		templatePath: normalizeConfiguredTemplatePath(readString(value.templatePath, "")),
 	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 function parseCommaSeparatedValues(value: string, fallback: string[]): string[] {
@@ -697,11 +657,7 @@ function parseCommaSeparatedValues(value: string, fallback: string[]): string[] 
 	return entries.length > 0 ? entries : [...fallback];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
-function createEmptyFolderPromptRule(): ObsidianCardFolderPromptRule {
+function createEmptyFolderPromptRule(): ObcdFolderPromptRule {
 	return {
 		noteFolder: "",
 		templatePath: "",

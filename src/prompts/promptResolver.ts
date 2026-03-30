@@ -1,6 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 
-import type { ObsidianCardFolderPromptRule, ObsidianCardPromptSettings } from "../settings";
+import type { ObcdFolderPromptRule, ObcdPromptSettings } from "../settings";
 import { DEFAULT_FLASHCARD_PROMPT } from "./promptDefaults";
 
 export interface ResolvedGenerationPrompt {
@@ -11,7 +11,7 @@ export interface ResolvedGenerationPrompt {
 }
 
 interface RankedPromptRule {
-	rule: ObsidianCardFolderPromptRule;
+	rule: ObcdFolderPromptRule;
 	index: number;
 	normalizedNoteFolder: string;
 }
@@ -61,7 +61,7 @@ export function listPromptTemplateFiles(app: App, templatesFolder: string): stri
 
 export async function resolveGenerationPrompt(
 	app: App,
-	promptSettings: ObsidianCardPromptSettings,
+	promptSettings: ObcdPromptSettings,
 	file: TFile,
 ): Promise<ResolvedGenerationPrompt> {
 	const rankedRules = getRankedMatchingRules(file, promptSettings.folderRules);
@@ -163,7 +163,7 @@ function collectTemplateFiles(folder: TFolder, rootPath: string, results: string
 	}
 }
 
-function getRankedMatchingRules(file: TFile, rules: ObsidianCardFolderPromptRule[]): RankedPromptRule[] {
+function getRankedMatchingRules(file: TFile, rules: ObcdFolderPromptRule[]): RankedPromptRule[] {
 	const normalizedFileFolder = normalizePathForComparison(file.parent?.path ?? "/");
 
 	return rules

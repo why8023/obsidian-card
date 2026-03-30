@@ -1,12 +1,12 @@
 import { MarkdownView, Notice, TAbstractFile, TFile } from "obsidian";
 
-import type ObsidianCardPlugin from "../main";
+import type ObcdPlugin from "../main";
 import type { ExistingCardEntry, GenerationProgressState, ReviewGroup, ReviewResult, SidebarReviewSession } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { cloneReviewGroups, collectApprovedGroups } from "./reviewState";
 import { deleteExistingCards, restoreDeletedCards } from "../writing/flashcardWriter";
 
-export const OBCARD_SIDEBAR_VIEW_TYPE = "obcard-sidebar";
+export const OBCD_SIDEBAR_VIEW_TYPE = "obcd-sidebar";
 
 interface OpenReviewSessionOptions {
 	file: TFile;
@@ -31,7 +31,7 @@ interface UndoDeleteOperation {
 }
 
 export class CardSidebarController {
-	private readonly plugin: ObsidianCardPlugin;
+	private readonly plugin: ObcdPlugin;
 	private readonly listeners = new Set<() => void>();
 	private activeFile: TFile | null;
 	private existingCards: ExistingCardEntry[] = [];
@@ -42,7 +42,7 @@ export class CardSidebarController {
 	private generationProgress: GenerationProgressState | null = null;
 	private undoDeleteOperation: UndoDeleteOperation | null = null;
 
-	constructor(plugin: ObsidianCardPlugin) {
+	constructor(plugin: ObcdPlugin) {
 		this.plugin = plugin;
 		this.activeFile = this.resolveActiveMarkdownFile();
 
@@ -99,7 +99,7 @@ export class CardSidebarController {
 
 	async startGenerationProgress(progress: GenerationProgressState): Promise<void> {
 		const shouldEnsureView = this.generationProgress === null
-			|| this.plugin.app.workspace.getLeavesOfType(OBCARD_SIDEBAR_VIEW_TYPE).length === 0;
+			|| this.plugin.app.workspace.getLeavesOfType(OBCD_SIDEBAR_VIEW_TYPE).length === 0;
 		this.generationProgress = normalizeGenerationProgress(progress);
 		if (shouldEnsureView) {
 			await this.ensureViewOpen();
@@ -279,11 +279,11 @@ export class CardSidebarController {
 	}
 
 	private async ensureViewOpen(): Promise<void> {
-		const existingLeaf = this.plugin.app.workspace.getLeavesOfType(OBCARD_SIDEBAR_VIEW_TYPE)[0];
+		const existingLeaf = this.plugin.app.workspace.getLeavesOfType(OBCD_SIDEBAR_VIEW_TYPE)[0];
 		const leaf = existingLeaf ?? this.plugin.app.workspace.getRightLeaf(false) ?? this.plugin.app.workspace.getLeaf(false);
 
 		await leaf.setViewState({
-			type: OBCARD_SIDEBAR_VIEW_TYPE,
+			type: OBCD_SIDEBAR_VIEW_TYPE,
 			active: true,
 		});
 
@@ -417,3 +417,4 @@ function normalizeGenerationProgress(progress: GenerationProgressState): Generat
 		progress: Math.max(0, Math.min(1, progress.progress)),
 	};
 }
+

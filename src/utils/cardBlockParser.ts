@@ -1,53 +1,24 @@
 import type { TFile } from "obsidian";
 
-import { expandRangeToIncludeObarCustomNote } from "../obarCompatibility";
 import type { CardBlockMetadata, ExistingCardEntry, TextRange } from "../types";
-
-const OBCARD_SECTION_START_PREFIX = "<!-- obcard-section:start";
-const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
+import { collectGeneratedCardBlocks, findGeneratedCardBlockInnerRange } from "./generatedCardBlocks";
 const CARD_START_PREFIX = "<!-- card-start";
 const CARD_BACK_MARKER = "<!-- card-back -->";
 const CARD_END_PREFIX = "<!-- card-end";
 
 export function collectExistingCardEntries(file: TFile, content: string): ExistingCardEntry[] {
 	const entries: ExistingCardEntry[] = [];
-	let searchOffset = 0;
 
-	while (searchOffset < content.length) {
-		const blockStart = content.indexOf(OBCARD_SECTION_START_PREFIX, searchOffset);
-		if (blockStart === -1) {
-			break;
-		}
-
-		const startCommentEnd = content.indexOf("-->", blockStart);
-		if (startCommentEnd === -1) {
-			break;
-		}
-
-		const metadata = parseCardBlockMetadata(content.slice(blockStart, startCommentEnd + 3));
-		const blockEndMarkerIndex = content.indexOf(OBCARD_SECTION_END_MARKER, startCommentEnd + 3);
-		if (blockEndMarkerIndex === -1) {
-			break;
-		}
-
-		const innerBlockRange = {
-			from: blockStart,
-			to: blockEndMarkerIndex + OBCARD_SECTION_END_MARKER.length,
-		} satisfies TextRange;
-		const blockRange = expandRangeToIncludeObarCustomNote(content, innerBlockRange);
-
-		if (metadata !== null) {
-			entries.push(...collectCardsWithinBlock(
-				file,
-				content,
-				metadata,
-				blockRange,
-				startCommentEnd + 3,
-				blockEndMarkerIndex,
-			));
-		}
-
-		searchOffset = blockRange.to;
+	for (const block of collectGeneratedCardBlocks(content)) {
+		const innerRange = findGeneratedCardBlockInnerRange(content, block.range) ?? block.range;
+		entries.push(...collectCardsWithinBlock(
+			file,
+			content,
+			block.metadata,
+			block.range,
+			innerRange.from,
+			innerRange.to,
+		));
 	}
 
 	return entries;
@@ -119,37 +90,6 @@ function collectCardsWithinBlock(
 
 	return entries;
 }
-
-function parseCardBlockMetadata(comment: string): CardBlockMetadata | null {
-	const match = comment.match(/^<!--\s*obcard-section:start\s+([\s\S]+?)\s*-->$/);
-	const rawPayload = match?.[1];
-	if (!rawPayload) {
-		return null;
-	}
-
-	try {
-		const parsed = JSON.parse(rawPayload) as Record<string, unknown>;
-		const sectionKey = typeof parsed.sectionKey === "string" ? parsed.sectionKey : "";
-		const sourceHash = typeof parsed.sourceHash === "string" ? parsed.sourceHash : "";
-		const kind = parsed.kind;
-
-		if (sectionKey.length === 0 || sourceHash.length === 0 || (kind !== "selection" && kind !== "heading" && kind !== "preamble")) {
-			return null;
-		}
-
-		return {
-			sectionKey,
-			headingPath: Array.isArray(parsed.headingPath)
-				? parsed.headingPath.filter((entry): entry is string => typeof entry === "string")
-				: [],
-			sourceHash,
-			kind,
-		};
-	} catch {
-		return null;
-	}
-}
-
 function parseCardTags(comment: string): string[] {
 	const match = comment.match(/^<!--\s*card-start(?:\s+tags="([^"]*)")?\s*-->$/);
 	const rawTags = match?.[1];
