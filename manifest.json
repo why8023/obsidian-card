@@ -1,7 +1,7 @@
 {
 	"id": "obcd",
 	"name": "OBCD",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"minAppVersion": "0.15.0",
 	"description": "Generate, review, and append BASIC flashcards to notes.",
 	"author": "Obsidian",

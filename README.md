@@ -11,9 +11,10 @@ OBCD is an Obsidian community plugin for generating, reviewing, and managing BAS
 
 ## Development
 
-This project uses `npm` and `esbuild`.
+This project uses `mise`, `npm`, and `esbuild`.
 
 ```bash
+mise install
 npm install
 npm run dev
 ```
@@ -39,3 +40,10 @@ For local testing, copy those files into:
 ```
 
 If you develop inside the vault directly, keep the plugin folder name aligned with `manifest.json`'s `id`.
+
+## Release
+
+1. Update the package version with `npm version <major|minor|patch>`. The `version` script syncs `manifest.json` and `versions.json`.
+2. Verify the release locally with `npm run lint`, `npm run build`, and `npm run release:check`.
+3. Push the commit and the exact SemVer tag, for example `git push origin <branch> --follow-tags`.
+4. GitHub Actions will build the plugin and attach `manifest.json`, `main.js`, and `styles.css` to the GitHub Release for that tag.

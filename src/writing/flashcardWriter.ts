@@ -2,7 +2,7 @@ import type { TFile, Vault } from "obsidian";
 
 import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
-import type { ApprovedCardGroup, ExistingCardEntry, GeneratedBasicCard, TextRange } from "../types";
+import type { ApprovedCardGroup, GeneratedBasicCard, TextRange } from "../types";
 import { GENERATED_CARD_TYPE } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { detectNewline } from "../utils/markdown";

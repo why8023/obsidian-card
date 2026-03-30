@@ -1,0 +1,58 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "*.*.*"
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Use Node.js 22
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 22.x
+                  cache: "npm"
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Lint
+              run: npm run lint
+
+            - name: Build
+              run: npm run build
+
+            - name: Validate release metadata
+              run: npm run release:check -- ${{ github.ref_name }}
+
+            - name: Collect release assets
+              id: assets
+              shell: bash
+              run: |
+                  files=(
+                    manifest.json
+                    main.js
+                  )
+                  if [[ -f styles.css ]]; then
+                    files+=(styles.css)
+                  fi
+                  {
+                    echo 'files<<EOF'
+                    printf '%s\n' "${files[@]}"
+                    echo EOF
+                  } >> "$GITHUB_OUTPUT"
+
+            - name: Publish GitHub release
+              uses: softprops/action-gh-release@v2
+              with:
+                  files: ${{ steps.assets.outputs.files }}
+                  fail_on_unmatched_files: true
+                  generate_release_notes: true
