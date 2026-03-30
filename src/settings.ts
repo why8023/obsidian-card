@@ -22,12 +22,13 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 7;
+const SETTINGS_SCHEMA_VERSION = 8;
 
 export interface FlashcardGenerationSettings {
 	model: string;
 	maxCardsPerChunk: number;
 	temperature: number;
+	addObcdTag: boolean;
 }
 
 export interface ObcdDebugSettings {
@@ -74,6 +75,7 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	model: getDefaultModelForPreset("openrouter"),
 	maxCardsPerChunk: 3,
 	temperature: 0.2,
+	addObcdTag: true,
 };
 
 export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
@@ -290,6 +292,16 @@ export class ObcdSettingTab extends PluginSettingTab {
 						this.plugin.settings.generation.temperature = parsedValue;
 						await this.plugin.saveSettings();
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Add default obcd tag")
+			.setDesc("Append the obcd tag to every generated card before review and insertion.")
+			.addToggle((toggle) => toggle
+				.setValue(this.plugin.settings.generation.addObcdTag)
+				.onChange(async (value) => {
+					this.plugin.settings.generation.addObcdTag = value;
+					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)
@@ -518,6 +530,7 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 		model: readString(generationSource.model, fallback.model),
 		maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 }),
 		temperature: readNumber(generationSource.temperature, fallback.temperature, { min: 0, max: 2 }),
+		addObcdTag: readBoolean(generationSource.addObcdTag, fallback.addObcdTag),
 	};
 }
 

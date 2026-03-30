@@ -9,14 +9,17 @@ import { buildFileChunks, buildSelectionChunks } from "../generation/contentChun
 import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 import { resolveGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
+import { GENERATED_CARD_TYPE } from "../types";
 import type {
 	ApprovedCardGroup,
 	ChunkGenerationResult,
 	ContentChunk,
+	GeneratedBasicCard,
 	GenerationMode,
 	GenerationProgressPhase,
 	GenerationProgressState,
 	ReviewAction,
+	ReviewGroup,
 	ReviewResult,
 } from "../types";
 import { writeApprovedCardGroups } from "../writing/flashcardWriter";
@@ -213,7 +216,7 @@ export class FlashcardWorkflow {
 
 			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
 			const chunkResults = await this.generateChunkResults(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
-			const reviewGroups = buildReviewGroups(chunkResults);
+			const reviewGroups = this.applyGenerationDefaultsToReviewGroups(buildReviewGroups(chunkResults));
 			debugRun.recordCandidates(reviewGroups.flatMap((group) => group.candidates));
 
 			if (reviewGroups.length === 0) {
@@ -398,6 +401,41 @@ export class FlashcardWorkflow {
 			chunk: result.chunk,
 			cards: [...(approvedGroupsBySection.get(result.chunk.sectionKey) ?? [])],
 		}));
+	}
+
+	private applyGenerationDefaultsToReviewGroups(reviewGroups: ReviewGroup[]): ReviewGroup[] {
+		if (!this.plugin.settings.generation.addObcdTag) {
+			return reviewGroups;
+		}
+
+		return reviewGroups.map((group) => ({
+			...group,
+			candidates: group.candidates.map((candidate) => ({
+				...candidate,
+				card: this.applyGenerationDefaultsToCard(candidate.card),
+			})),
+		}));
+	}
+
+	private applyGenerationDefaultsToCard(card: GeneratedBasicCard): GeneratedBasicCard {
+		return {
+			...card,
+			tags: this.appendConfiguredTag(card.tags),
+		};
+	}
+
+	private appendConfiguredTag(tags: string[]): string[] {
+		const normalizedTag = GENERATED_CARD_TYPE.trim();
+		if (normalizedTag.length === 0) {
+			return [...tags];
+		}
+
+		const hasTag = tags.some((tag) => tag.trim().toLowerCase() === normalizedTag.toLowerCase());
+		if (hasTag) {
+			return [...tags];
+		}
+
+		return [...tags, normalizedTag];
 	}
 
 	private async loadFileContent(file: TFile): Promise<string> {
