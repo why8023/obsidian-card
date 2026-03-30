@@ -1,4 +1,4 @@
-import { MarkdownView, Notice, TAbstractFile, TFile } from "obsidian";
+import { MarkdownView, Notice, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 
 import type ObcdPlugin from "../main";
 import type { ExistingCardEntry, GenerationProgressState } from "../types";
@@ -11,6 +11,7 @@ export interface CardSidebarSnapshot {
 	activeFile: TFile | null;
 	existingCards: ExistingCardEntry[];
 	generationProgress: GenerationProgressState | null;
+	isRefreshingFile: boolean;
 	isMutating: boolean;
 	hasUndoableDelete: boolean;
 }
@@ -22,12 +23,18 @@ interface UndoDeleteOperation {
 	afterContent: string;
 }
 
+interface ResolvedMarkdownViewContext {
+	view: MarkdownView | null;
+	source: "active-view" | "most-recent-leaf" | "root-leaf-fallback" | "none";
+}
+
 export class CardSidebarController {
 	private readonly plugin: ObcdPlugin;
 	private readonly listeners = new Set<() => void>();
 	private activeFile: TFile | null;
 	private existingCards: ExistingCardEntry[] = [];
 	private refreshToken = 0;
+	private isRefreshingFile = false;
 	private isMutating = false;
 	private generationProgress: GenerationProgressState | null = null;
 	private undoDeleteOperation: UndoDeleteOperation | null = null;
@@ -37,13 +44,32 @@ export class CardSidebarController {
 		this.activeFile = this.resolveActiveMarkdownFile();
 
 		this.plugin.registerEvent(this.plugin.app.workspace.on("file-open", (file) => {
-			this.activeFile = isMarkdownFile(file) ? file : null;
-			void this.refreshDisplayedFileCards();
+			const nextFile = isMarkdownFile(file) ? file : null;
+			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
+				return;
+			}
+			void this.handleActiveFileChange(nextFile, "workspace:file-open");
+		}));
+
+		this.plugin.registerEvent(this.plugin.app.workspace.on("active-leaf-change", () => {
+			const nextFile = this.resolveActiveMarkdownFile();
+			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
+				return;
+			}
+			void this.handleActiveFileChange(nextFile, "workspace:active-leaf-change");
+		}));
+
+		this.plugin.registerEvent(this.plugin.app.workspace.on("layout-change", () => {
+			const nextFile = this.resolveActiveMarkdownFile();
+			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
+				return;
+			}
+			void this.handleActiveFileChange(nextFile, "workspace:layout-change");
 		}));
 
 		this.plugin.registerEvent(this.plugin.app.vault.on("modify", (file) => {
 			if (isMarkdownFile(file) && this.activeFile?.path === file.path) {
-				void this.refreshDisplayedFileCards(file);
+				void this.refreshDisplayedFileCards(file, "vault:modify");
 			}
 		}));
 
@@ -68,6 +94,7 @@ export class CardSidebarController {
 			activeFile: this.activeFile,
 			existingCards: [...this.existingCards],
 			generationProgress: this.generationProgress === null ? null : { ...this.generationProgress },
+			isRefreshingFile: this.isRefreshingFile,
 			isMutating: this.isMutating,
 			hasUndoableDelete: this.activeFile !== null && this.undoDeleteOperation?.filePath === this.activeFile.path,
 		};
@@ -79,8 +106,8 @@ export class CardSidebarController {
 	}
 
 	async refresh(): Promise<void> {
-		this.activeFile = this.resolveActiveMarkdownFile();
-		await this.refreshDisplayedFileCards();
+		const nextFile = this.resolveActiveMarkdownFile();
+		await this.handleActiveFileChange(nextFile, "manual-refresh");
 	}
 
 	async startGenerationProgress(progress: GenerationProgressState): Promise<void> {
@@ -205,41 +232,105 @@ export class CardSidebarController {
 			type: OBCD_SIDEBAR_VIEW_TYPE,
 			active: true,
 		});
-
-		this.plugin.app.workspace.setActiveLeaf(leaf, { focus: false });
 	}
 
-	private async refreshDisplayedFileCards(forcedFile?: TFile | null): Promise<void> {
+	private async refreshDisplayedFileCards(forcedFile?: TFile | null, reason = "unspecified"): Promise<void> {
 		const file = forcedFile ?? this.activeFile;
 		const token = ++this.refreshToken;
 
 		if (!isMarkdownFile(file)) {
 			this.existingCards = [];
+			this.isRefreshingFile = false;
 			this.notify();
 			return;
 		}
 
-		const content = await this.readFileContent(file);
+		this.isRefreshingFile = true;
+		const readResult = await this.readFileContent(file, reason);
 		if (token !== this.refreshToken) {
 			return;
 		}
 
-		this.existingCards = collectExistingCardEntries(file, content);
+		const nextCards = collectExistingCardEntries(file, readResult.content);
+		this.existingCards = nextCards;
+		this.isRefreshingFile = false;
 		this.notify();
 	}
 
 	private resolveActiveMarkdownFile(): TFile | null {
-		const activeFile = this.plugin.app.workspace.getActiveFile();
-		return isMarkdownFile(activeFile) ? activeFile : null;
+		const markdownViewContext = this.resolveCurrentMarkdownViewContext();
+		const file = markdownViewContext.view?.file ?? null;
+		return isMarkdownFile(file) ? file : null;
 	}
 
-	private async readFileContent(file: TFile): Promise<string> {
-		const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
-		if (activeView?.file?.path === file.path) {
-			return activeView.editor.getValue();
+	private async readFileContent(file: TFile, reason: string): Promise<{
+		content: string;
+	}> {
+		const preferCachedRead = reason.startsWith("workspace:");
+		const markdownViewContext = this.resolveCurrentMarkdownViewContext();
+		const markdownView = markdownViewContext.view;
+		if (!preferCachedRead && markdownView?.file?.path === file.path) {
+			return {
+				content: markdownView.editor.getValue(),
+			};
 		}
 
-		return await this.plugin.app.vault.cachedRead(file);
+		return {
+			content: await this.plugin.app.vault.cachedRead(file),
+		};
+	}
+
+	private resolveCurrentMarkdownViewContext(): ResolvedMarkdownViewContext {
+		const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+		if (activeView !== null) {
+			return {
+				view: activeView,
+				source: "active-view",
+			};
+		}
+
+		const mostRecentLeaf = this.resolveMostRecentMarkdownLeaf();
+		if (mostRecentLeaf?.view instanceof MarkdownView) {
+			return {
+				view: mostRecentLeaf.view,
+				source: "most-recent-leaf",
+			};
+		}
+
+		let fallbackView: MarkdownView | null = null;
+		this.plugin.app.workspace.iterateRootLeaves((leaf) => {
+			if (fallbackView === null && leaf.view instanceof MarkdownView) {
+				fallbackView = leaf.view;
+			}
+		});
+		if (fallbackView !== null) {
+			return {
+				view: fallbackView,
+				source: "root-leaf-fallback",
+			};
+		}
+
+		return {
+			view: null,
+			source: "none",
+		};
+	}
+
+	private resolveMostRecentMarkdownLeaf(): WorkspaceLeaf | null {
+		const leaf = this.plugin.app.workspace.getMostRecentLeaf();
+		return leaf?.view instanceof MarkdownView ? leaf : null;
+	}
+
+	private async handleActiveFileChange(file: TFile | null, reason = "unspecified"): Promise<void> {
+		const nextFile = isMarkdownFile(file) ? file : null;
+		const activeFileChanged = this.activeFile?.path !== nextFile?.path;
+		this.activeFile = nextFile;
+		this.isRefreshingFile = nextFile !== null;
+		if (activeFileChanged) {
+			this.existingCards = [];
+		}
+		this.notify();
+		await this.refreshDisplayedFileCards(nextFile, reason);
 	}
 
 	private handleRename(file: TAbstractFile, oldPath: string): void {
@@ -256,7 +347,7 @@ export class CardSidebarController {
 		}
 
 		if (this.activeFile?.path === file.path || oldPath === this.activeFile?.path) {
-			void this.refreshDisplayedFileCards(file);
+			void this.refreshDisplayedFileCards(file, "vault:rename");
 		}
 	}
 

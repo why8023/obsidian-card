@@ -288,7 +288,9 @@ export class CardSidebarView extends ItemView {
 		if (filteredCards.length === 0) {
 			this.renderEmptyState(
 				sectionEl,
-				this.cardFilterScope === "generated"
+				state.isRefreshingFile
+					? "Loading flashcards..."
+					: this.cardFilterScope === "generated"
 					? "No plugin-generated flashcards match the current filter."
 					: "No flashcards match the current filter.",
 			);
