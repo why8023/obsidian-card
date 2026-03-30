@@ -95,6 +95,7 @@ interface DebugArtifact {
 		maxCardsPerChunk: number;
 		temperature: number;
 		addObcdTag: boolean;
+		defaultTag: string;
 	};
 	events: DebugEvent[];
 	chunks: DebugChunkRecord[];
@@ -168,6 +169,7 @@ class ActiveDebugRun implements DebugRun {
 				maxCardsPerChunk: plugin.settings.generation.maxCardsPerChunk,
 				temperature: plugin.settings.generation.temperature,
 				addObcdTag: plugin.settings.generation.addObcdTag,
+				defaultTag: plugin.settings.generation.defaultTag,
 			},
 			events: [],
 			chunks: [],

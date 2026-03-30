@@ -22,13 +22,15 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 8;
+const SETTINGS_SCHEMA_VERSION = 9;
+export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
 export interface FlashcardGenerationSettings {
 	model: string;
 	maxCardsPerChunk: number;
 	temperature: number;
 	addObcdTag: boolean;
+	defaultTag: string;
 }
 
 export interface ObcdDebugSettings {
@@ -76,6 +78,7 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	maxCardsPerChunk: 3,
 	temperature: 0.2,
 	addObcdTag: true,
+	defaultTag: DEFAULT_GENERATED_CARD_TAG,
 };
 
 export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
@@ -295,12 +298,23 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Add default obcd tag")
-			.setDesc("Append the obcd tag to every generated card before review and insertion.")
+			.setName("Add default tag")
+			.setDesc("Append the configured default tag to every generated card before review and insertion.")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.generation.addObcdTag)
 				.onChange(async (value) => {
 					this.plugin.settings.generation.addObcdTag = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Default tag")
+			.setDesc("Single tag appended when the default-tag option is enabled.")
+			.addText((text) => text
+				.setPlaceholder(DEFAULT_GENERATED_CARD_TAG)
+				.setValue(this.plugin.settings.generation.defaultTag)
+				.onChange(async (value) => {
+					this.plugin.settings.generation.defaultTag = normalizeConfiguredDefaultTag(value, DEFAULT_GENERATED_CARD_TAG);
 					await this.plugin.saveSettings();
 				}));
 
@@ -531,6 +545,7 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 		maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 }),
 		temperature: readNumber(generationSource.temperature, fallback.temperature, { min: 0, max: 2 }),
 		addObcdTag: readBoolean(generationSource.addObcdTag, fallback.addObcdTag),
+		defaultTag: normalizeConfiguredDefaultTag(generationSource.defaultTag, fallback.defaultTag),
 	};
 }
 
@@ -605,6 +620,17 @@ function readPresetType(value: unknown, fallback: FlashcardProviderPresetType): 
 
 function readString(value: unknown, fallback: string): string {
 	return typeof value === "string" ? value : fallback;
+}
+
+function normalizeConfiguredDefaultTag(value: unknown, fallback: string): string {
+	const normalizedValue = typeof value === "string"
+		? value
+			.replace(/"/g, "")
+			.replace(/,/g, " ")
+			.trim()
+		: "";
+
+	return normalizedValue.length > 0 ? normalizedValue : fallback;
 }
 
 function readNumber(value: unknown, fallback: number, range: { min: number; max: number }): number {

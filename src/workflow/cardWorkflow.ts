@@ -9,7 +9,7 @@ import { buildFileChunks, buildSelectionChunks } from "../generation/contentChun
 import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 import { resolveGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
-import { GENERATED_CARD_TYPE } from "../types";
+import { DEFAULT_GENERATED_CARD_TAG } from "../settings";
 import type {
 	ApprovedCardGroup,
 	ChunkGenerationResult,
@@ -425,7 +425,7 @@ export class FlashcardWorkflow {
 	}
 
 	private appendConfiguredTag(tags: string[]): string[] {
-		const normalizedTag = GENERATED_CARD_TYPE.trim();
+		const normalizedTag = this.plugin.settings.generation.defaultTag.trim() || DEFAULT_GENERATED_CARD_TAG;
 		if (normalizedTag.length === 0) {
 			return [...tags];
 		}
