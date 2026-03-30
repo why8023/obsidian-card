@@ -1,5 +1,6 @@
 import type { TFile } from "obsidian";
 
+import { expandRangeToIncludeObarCustomNote } from "../obarCompatibility";
 import type { CardBlockMetadata, ExistingCardEntry, TextRange } from "../types";
 
 const OBCARD_SECTION_START_PREFIX = "<!-- obcard-section:start";
@@ -29,10 +30,11 @@ export function collectExistingCardEntries(file: TFile, content: string): Existi
 			break;
 		}
 
-		const blockRange = {
+		const innerBlockRange = {
 			from: blockStart,
 			to: blockEndMarkerIndex + OBCARD_SECTION_END_MARKER.length,
 		} satisfies TextRange;
+		const blockRange = expandRangeToIncludeObarCustomNote(content, innerBlockRange);
 
 		if (metadata !== null) {
 			entries.push(...collectCardsWithinBlock(

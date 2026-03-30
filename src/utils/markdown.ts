@@ -1,3 +1,5 @@
+import { expandRangeToIncludeObarCustomNote } from "../obarCompatibility";
+
 export interface HeadingInfo {
 	level: number;
 	title: string;
@@ -234,15 +236,17 @@ export function collectObsidianCardBlocks(content: string): Array<{
 			break;
 		}
 
+		const innerRange = {
+			from: startIndex,
+			to: endIndex + OBCARD_SECTION_END_MARKER.length,
+		};
+
 		blocks.push({
 			metadata,
-			range: {
-				from: startIndex,
-				to: endIndex + OBCARD_SECTION_END_MARKER.length,
-			},
+			range: expandRangeToIncludeObarCustomNote(content, innerRange),
 		});
 
-		searchOffset = endIndex + OBCARD_SECTION_END_MARKER.length;
+		searchOffset = blocks[blocks.length - 1]?.range.to ?? innerRange.to;
 	}
 
 	return blocks;

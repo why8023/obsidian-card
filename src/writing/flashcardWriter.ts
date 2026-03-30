@@ -1,19 +1,28 @@
 import type { TFile, Vault } from "obsidian";
 
+import type { ObarCompatibilityConfig } from "../obarCompatibility";
+import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
 import type { ApprovedCardGroup, CardBlockMetadata, ExistingCardEntry, GeneratedBasicCard, TextRange } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { collectObsidianCardBlocks, detectNewline } from "../utils/markdown";
 
 const OBCARD_SECTION_END_MARKER = "<!-- obcard-section:end -->";
 
-export async function writeApprovedCardGroups(vault: Vault, file: TFile, groups: ApprovedCardGroup[]): Promise<number> {
+export async function writeApprovedCardGroups(
+	vault: Vault,
+	file: TFile,
+	groups: ApprovedCardGroup[],
+	options?: {
+		obarCompatibility?: ObarCompatibilityConfig;
+	},
+): Promise<number> {
 	if (groups.length === 0) {
 		return 0;
 	}
 
 	let insertedCount = 0;
 	await vault.process(file, (content) => {
-		const result = upsertCardGroups(content, groups);
+		const result = upsertCardGroups(content, groups, options);
 		insertedCount = result.insertedCount;
 		return result.content;
 	});
@@ -109,8 +118,17 @@ export function renderCardBlock(metadata: CardBlockMetadata, cards: GeneratedBas
 	return parts.join(newline);
 }
 
-function upsertCardGroups(content: string, groups: ApprovedCardGroup[]): { content: string; insertedCount: number } {
+function upsertCardGroups(
+	content: string,
+	groups: ApprovedCardGroup[],
+	options?: {
+		obarCompatibility?: ObarCompatibilityConfig;
+	},
+): { content: string; insertedCount: number } {
 	const newline = detectNewline(content);
+	const shouldUseObarWrapper = options?.obarCompatibility !== undefined
+		? isObarRecordContent(content, options.obarCompatibility)
+		: false;
 	const sortedGroups = [...groups].sort((left, right) => (
 		right.chunk.insertOffset - left.chunk.insertOffset || right.chunk.range.from - left.chunk.range.from
 	));
@@ -125,11 +143,14 @@ function upsertCardGroups(content: string, groups: ApprovedCardGroup[]): { conte
 			sourceHash: group.chunk.sourceHash,
 			kind: group.chunk.blockKind,
 		}, group.cards, newline);
+		const blockToWrite = shouldUseObarWrapper && options?.obarCompatibility
+			? renderObarWrappedBlock(block, newline, options.obarCompatibility)
+			: block;
 
 		insertedCount += group.cards.length;
 
 		if (group.chunk.kind === "selection") {
-			workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, block, newline);
+			workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
 			continue;
 		}
 
@@ -137,11 +158,11 @@ function upsertCardGroups(content: string, groups: ApprovedCardGroup[]): { conte
 			.find((entry) => entry.metadata.sectionKey === group.chunk.sectionKey);
 
 		if (existingBlock) {
-			workingContent = `${workingContent.slice(0, existingBlock.range.from)}${block}${workingContent.slice(existingBlock.range.to)}`;
+			workingContent = `${workingContent.slice(0, existingBlock.range.from)}${blockToWrite}${workingContent.slice(existingBlock.range.to)}`;
 			continue;
 		}
 
-		workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, block, newline);
+		workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
 	}
 
 	return {
@@ -257,7 +278,7 @@ function removeExistingCardsFromContent(
 		}
 
 		replacements.push({
-			range: block.range,
+			range: findInnerCardBlockRange(content, block.range) ?? block.range,
 			value: renderCardBlock(
 				block.metadata,
 				remainingCards.map((entry) => ({
@@ -347,4 +368,22 @@ function endsWithDoubleNewline(value: string, newline: string): boolean {
 
 function startsWithDoubleNewline(value: string, newline: string): boolean {
 	return value.startsWith(`${newline}${newline}`);
+}
+
+function findInnerCardBlockRange(content: string, outerRange: TextRange): TextRange | null {
+	const blockContent = content.slice(outerRange.from, outerRange.to);
+	const innerStart = blockContent.indexOf("<!-- obcard-section:start");
+	if (innerStart === -1) {
+		return null;
+	}
+
+	const innerEndMarkerIndex = blockContent.indexOf(OBCARD_SECTION_END_MARKER, innerStart);
+	if (innerEndMarkerIndex === -1) {
+		return null;
+	}
+
+	return {
+		from: outerRange.from + innerStart,
+		to: outerRange.from + innerEndMarkerIndex + OBCARD_SECTION_END_MARKER.length,
+	};
 }

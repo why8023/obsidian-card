@@ -213,7 +213,9 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite);
+			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite, {
+				obarCompatibility: this.plugin.settings.compatibility.obar,
+			});
 			if (!isBatchMode) {
 				await this.plugin.sidebar.completePendingSessionAfterWrite(file);
 			}
