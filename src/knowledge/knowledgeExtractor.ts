@@ -71,6 +71,7 @@ function normalizeKnowledgeUnits(payload: unknown, chunk: ContentChunk): Knowled
 
 		units.push({
 			id: `${chunk.sectionKey}:unit:${index + 1}`,
+			sourceUnitIds: [`${chunk.sectionKey}:unit:${index + 1}`],
 			filePath: chunk.filePath,
 			sectionKey: chunk.sectionKey,
 			headingPath: [...chunk.headingPath],

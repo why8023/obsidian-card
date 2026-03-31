@@ -8,6 +8,7 @@ import { buildSelectionChunks, buildFileChunks } from "../generation/contentChun
 import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 import { allocateCardBudget } from "../knowledge/budgetAllocator";
 import { GlobalRanker } from "../knowledge/globalRanker";
+import { HierarchicalAggregator, estimateHierarchicalAggregationCalls } from "../knowledge/hierarchicalAggregator";
 import { KnowledgeExtractor } from "../knowledge/knowledgeExtractor";
 import { buildChapterPlan } from "../planning/chapterPlanner";
 import { estimateScope } from "../planning/scopeEstimator";
@@ -23,6 +24,7 @@ import type {
 	GenerationMode,
 	GenerationProgressPhase,
 	GenerationProgressState,
+	GenerationStrategy,
 	KnowledgeTopic,
 	KnowledgeUnit,
 	PlanningResult,
@@ -108,6 +110,38 @@ export class FlashcardWorkflow {
 			} satisfies GenerationProgressContext;
 			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the note content up to the cursor.");
 			await this.processSingleFile(target.file, scopedContent, chunks, false, target.mode, progressContext);
+		});
+	}
+
+	async generateForCurrentSection(editor: Editor, ctx: MarkdownFileInfo): Promise<void> {
+		await this.runSafely(async () => {
+			const target = resolveCursorTarget(editor, ctx);
+			if (target === null || target.cursorOffset === undefined) {
+				new Notice("Open a Markdown file before generating flashcards.");
+				return;
+			}
+
+			const content = editor.getValue();
+			const allChunks = buildFileChunks(target.file, content);
+			const sectionChunks = this.findCurrentSectionChunks(allChunks, target.cursorOffset);
+			if (sectionChunks.length === 0) {
+				new Notice("Move the cursor into a heading section before generating flashcards for the current section.");
+				return;
+			}
+
+			const progressContext = {
+				currentFileIndex: 1,
+				totalFiles: 1,
+			} satisfies GenerationProgressContext;
+			await this.beginGenerationProgress(target.file, "section-file", progressContext, sectionChunks.length, "Preparing the current section.");
+			await this.processSingleFile(
+				target.file,
+				this.buildContentForChunks(content, sectionChunks),
+				sectionChunks,
+				false,
+				"section-file",
+				progressContext,
+			);
 		});
 	}
 
@@ -223,6 +257,7 @@ export class FlashcardWorkflow {
 
 			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
 			const scopeEstimate = estimateScope(mode, contentForPlanning, chunks, this.plugin.settings.generation);
+			const strategy = scopeEstimate.recommendedStrategy;
 			debugRun.log("estimate", "Calculated scope estimate.", scopeEstimate);
 			this.updateGenerationProgress(file, mode, progressContext, {
 				phase: "estimating",
@@ -232,7 +267,7 @@ export class FlashcardWorkflow {
 				detail: scopeEstimate.reason,
 			});
 
-			if (scopeEstimate.recommendedStrategy === "chapter-planning") {
+			if (strategy === "chapter-planning") {
 				const plan = buildChapterPlan(chunks, scopeEstimate, scopeEstimate.reason);
 				debugRun.log("planning", "Produced a chapter plan instead of generating cards.", plan);
 				this.updateGenerationProgress(file, mode, progressContext, {
@@ -251,7 +286,7 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			if (scopeEstimate.recommendedStrategy === "refuse-or-scope") {
+			if (strategy === "refuse-or-scope") {
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "planning-only",
 					currentChunkIndex: 0,
@@ -288,17 +323,38 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
+			const rankingUnits = await this.prepareUnitsForRanking(
+				file,
+				chunks,
+				knowledgeUnits,
+				strategy,
+				resolvedPrompt.prompt,
+				debugRun,
+				mode,
+				progressContext,
+			);
+			if (rankingUnits.length === 0) {
+				new Notice(`The current scope in ${file.basename} did not retain any high-value section summaries for ranking.`);
+				const result = {
+					action: isBatchMode ? "skip-file" : "cancel",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("no-ranking-units", result);
+				return result;
+			}
+
 			this.updateGenerationProgress(file, mode, progressContext, {
 				phase: "ranking",
 				currentChunkIndex: 0,
-				totalChunks: knowledgeUnits.length,
+				totalChunks: rankingUnits.length,
 				fileProgress: 0.62,
-				detail: `Ranking ${knowledgeUnits.length} knowledge unit${knowledgeUnits.length === 1 ? "" : "s"} across the document.`,
+				detail: this.describeRankingProgress(strategy, rankingUnits.length),
 			});
-			const topics = await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(knowledgeUnits);
+			const topics = await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(rankingUnits);
 			debugRun.log("topics", "Built document-level topics.", {
 				topicCount: topics.length,
 				topics,
+				strategy,
 			});
 
 			if (topics.length === 0) {
@@ -311,7 +367,12 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const remainingLlmCalls = this.plugin.settings.generation.maxTaskLlmCalls - chunks.length - 1;
+			const remainingLlmCalls = this.plugin.settings.generation.maxTaskLlmCalls
+				- chunks.length
+				- 1
+				- (strategy === "hierarchical-global"
+					? estimateHierarchicalAggregationCalls(chunks, knowledgeUnits, this.plugin.settings.generation.maxKnowledgeUnitsPerChunk)
+					: 0);
 			const budgetPlan = allocateCardBudget(topics, this.plugin.settings.generation, remainingLlmCalls);
 			debugRun.log("budget", "Allocated document card budget.", budgetPlan);
 
@@ -329,8 +390,10 @@ export class FlashcardWorkflow {
 				file,
 				chunks,
 				knowledgeUnits,
+				rankingUnits,
 				topics,
 				budgetPlan,
+				strategy,
 				resolvedPrompt.prompt,
 				debugRun,
 				mode,
@@ -441,18 +504,51 @@ export class FlashcardWorkflow {
 		return units;
 	}
 
-	private async composeCardGroups(
+	private async prepareUnitsForRanking(
 		file: TFile,
 		chunks: ContentChunk[],
 		knowledgeUnits: KnowledgeUnit[],
+		strategy: GenerationStrategy,
+		customPrompt: string,
+		debugRun: DebugRun,
+		mode: GenerationMode,
+		progressContext: GenerationProgressContext,
+	): Promise<KnowledgeUnit[]> {
+		if (strategy !== "hierarchical-global") {
+			return knowledgeUnits;
+		}
+
+		this.updateGenerationProgress(file, mode, progressContext, {
+			phase: "ranking",
+			currentChunkIndex: 0,
+			totalChunks: knowledgeUnits.length,
+			fileProgress: 0.58,
+			detail: `Compressing ${knowledgeUnits.length} knowledge units into section summaries before document ranking.`,
+		});
+
+		const aggregatedUnits = await new HierarchicalAggregator(this.plugin.settings, customPrompt, debugRun).aggregate(chunks, knowledgeUnits);
+		debugRun.log("hierarchy", "Prepared section-level summary units for hierarchical ranking.", {
+			originalUnitCount: knowledgeUnits.length,
+			aggregatedUnitCount: aggregatedUnits.length,
+		});
+		return aggregatedUnits;
+	}
+
+	private async composeCardGroups(
+		file: TFile,
+		chunks: ContentChunk[],
+		originalKnowledgeUnits: KnowledgeUnit[],
+		rankingUnits: KnowledgeUnit[],
 		topics: KnowledgeTopic[],
 		budgetPlan: BudgetPlan,
+		strategy: GenerationStrategy,
 		customPrompt: string,
 		debugRun: DebugRun,
 		mode: GenerationMode,
 		progressContext: GenerationProgressContext,
 	): Promise<ApprovedCardGroup[]> {
-		const unitsById = new Map(knowledgeUnits.map((unit) => [unit.id, unit] as const));
+		const originalUnitsById = new Map(originalKnowledgeUnits.map((unit) => [unit.id, unit] as const));
+		const rankingUnitsById = new Map(rankingUnits.map((unit) => [unit.id, unit] as const));
 		const topicsById = new Map(topics.map((topic) => [topic.topicId, topic] as const));
 		const chunksBySectionKey = new Map(chunks.map((chunk) => [chunk.sectionKey, chunk] as const));
 		const composer = new CardComposer(this.plugin.settings, customPrompt, debugRun);
@@ -465,9 +561,7 @@ export class FlashcardWorkflow {
 				continue;
 			}
 
-			const topicUnits = topic.memberUnitIds
-				.map((unitId) => unitsById.get(unitId))
-				.filter((unit): unit is KnowledgeUnit => unit !== undefined);
+			const topicUnits = this.resolveOriginalUnitsForTopic(topic, rankingUnitsById, originalUnitsById);
 			if (topicUnits.length === 0) {
 				continue;
 			}
@@ -485,7 +579,7 @@ export class FlashcardWorkflow {
 					topic,
 					units: topicUnits,
 					cardCount: allocation.cardCount,
-					strategy: "direct-global",
+					strategy,
 				} satisfies CompositionRequest, index);
 				this.appendComposedCards(composition, topicUnits, chunksBySectionKey, groupedCards, seenCards);
 			} catch (error) {
@@ -536,6 +630,25 @@ export class FlashcardWorkflow {
 		groupedCards.set(anchorChunk.sectionKey, group);
 	}
 
+	private resolveOriginalUnitsForTopic(
+		topic: KnowledgeTopic,
+		rankingUnitsById: Map<string, KnowledgeUnit>,
+		originalUnitsById: Map<string, KnowledgeUnit>,
+	): KnowledgeUnit[] {
+		const topicSourceUnitIds = topic.memberUnitIds.flatMap((unitId) => {
+			const rankingUnit = rankingUnitsById.get(unitId);
+			if (rankingUnit) {
+				return rankingUnit.sourceUnitIds;
+			}
+
+			return originalUnitsById.has(unitId) ? [unitId] : [];
+		});
+
+		return Array.from(new Set(topicSourceUnitIds))
+			.map((unitId) => originalUnitsById.get(unitId))
+			.filter((unit): unit is KnowledgeUnit => unit !== undefined);
+	}
+
 	private resolveAnchorChunk(topicUnits: KnowledgeUnit[], chunksBySectionKey: Map<string, ContentChunk>): ContentChunk | null {
 		for (const unit of topicUnits) {
 			const chunk = chunksBySectionKey.get(unit.sectionKey);
@@ -545,6 +658,71 @@ export class FlashcardWorkflow {
 		}
 
 		return null;
+	}
+
+	private findCurrentSectionChunks(chunks: ContentChunk[], cursorOffset: number): ContentChunk[] {
+		const activeIndex = this.findActiveChunkIndex(chunks, cursorOffset);
+		if (activeIndex === -1) {
+			return [];
+		}
+
+		const activeChunk = chunks[activeIndex]!;
+		if (activeChunk.headingPath.length === 0) {
+			return [activeChunk];
+		}
+
+		const rootTitle = activeChunk.headingPath[0];
+		if (!rootTitle) {
+			return [activeChunk];
+		}
+
+		let start = activeIndex;
+		while (start > 0 && this.getChunkRootTitle(chunks[start - 1]!) === rootTitle) {
+			start -= 1;
+		}
+
+		let end = activeIndex;
+		while (end + 1 < chunks.length && this.getChunkRootTitle(chunks[end + 1]!) === rootTitle) {
+			end += 1;
+		}
+
+		return chunks.slice(start, end + 1);
+	}
+
+	private findActiveChunkIndex(chunks: ContentChunk[], cursorOffset: number): number {
+		const containingIndex = chunks.findIndex((chunk) => chunk.range.from <= cursorOffset && cursorOffset <= chunk.range.to);
+		if (containingIndex !== -1) {
+			return containingIndex;
+		}
+
+		for (let index = chunks.length - 1; index >= 0; index -= 1) {
+			const chunk = chunks[index];
+			if (chunk && chunk.range.from <= cursorOffset) {
+				return index;
+			}
+		}
+
+		return -1;
+	}
+
+	private getChunkRootTitle(chunk: ContentChunk): string {
+		return chunk.headingPath[0] ?? chunk.sectionKey;
+	}
+
+	private buildContentForChunks(content: string, chunks: ContentChunk[]): string {
+		if (chunks.length === 0) {
+			return "";
+		}
+
+		const range = chunks.reduce((result, chunk) => ({
+			from: Math.min(result.from, chunk.range.from),
+			to: Math.max(result.to, chunk.range.to),
+		}), {
+			from: chunks[0]!.range.from,
+			to: chunks[0]!.range.to,
+		});
+
+		return content.slice(range.from, range.to);
 	}
 
 	private resolveRegenerationOptions(mode: GenerationMode, chunks: ContentChunk[]): CardRegenerationOptions {
@@ -723,6 +901,14 @@ export class FlashcardWorkflow {
 		return start + (((completedItems + 1) / totalItems) * (end - start));
 	}
 
+	private describeRankingProgress(strategy: GenerationStrategy, unitCount: number): string {
+		if (strategy === "hierarchical-global") {
+			return `Ranking ${unitCount} section summary unit${unitCount === 1 ? "" : "s"} across the document.`;
+		}
+
+		return `Ranking ${unitCount} knowledge unit${unitCount === 1 ? "" : "s"} across the document.`;
+	}
+
 	private describeChunkProgress(chunk: ContentChunk, chunkNumber: number, totalChunks: number): string {
 		const title = chunk.titleHint?.trim() ?? "";
 		if (title.length > 0) {
@@ -736,7 +922,7 @@ export class FlashcardWorkflow {
 		const recommendedSections = plan.sections
 			.filter((section) => section.recommended)
 			.slice(0, 3)
-			.map((section) => section.title);
+			.map((section) => `${section.title} (${section.chunkCount} chunk${section.chunkCount === 1 ? "" : "s"})`);
 
 		if (recommendedSections.length === 0) {
 			return plan.reason;
@@ -753,7 +939,7 @@ export class FlashcardWorkflow {
 			.join(", ");
 
 		const recommendationSuffix = recommendedSections.length > 0
-			? ` Recommended sections: ${recommendedSections}.`
+			? ` Recommended sections: ${recommendedSections}. Use the current section command after moving the cursor into one of them.`
 			: "";
 		new Notice(
 			`${file.basename} was downgraded to chapter planning because it is outside the direct-global scope.${recommendationSuffix}`,

@@ -17,8 +17,14 @@ export function estimateScope(
 		chunks.length * Math.max(settings.maxKnowledgeUnitsPerChunk, 1),
 		Math.max(Math.ceil(characterCount / 900), chunks.length),
 	);
-	const estimatedLlmCalls = chunks.length + 1 + Math.min(settings.maxTotalCardsPerDocument, chunks.length + estimatedKnowledgeUnitCount);
 	const topLevelHeadingCount = headings.filter((heading) => heading.level <= 2).length;
+	const estimatedHierarchyCalls = settings.maxHierarchyDepth > 1
+		? Math.min(Math.max(topLevelHeadingCount, 1), chunks.length)
+		: 0;
+	const estimatedLlmCalls = chunks.length
+		+ 1
+		+ Math.min(settings.maxTotalCardsPerDocument, chunks.length + estimatedKnowledgeUnitCount)
+		+ estimatedHierarchyCalls;
 	const isLikelyBookLikeDocument = (
 		characterCount >= 32000
 		&& (topLevelHeadingCount >= 10 || headings.length >= 24 || headingDepth >= 4)

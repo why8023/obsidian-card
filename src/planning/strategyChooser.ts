@@ -40,7 +40,15 @@ export function chooseGenerationStrategy(
 
 	const exceedsDirectGlobalTokenLimit = estimate.estimatedInputTokens > settings.maxTokensForDirectGlobal;
 	const exceedsDirectGlobalChunkLimit = estimate.chunkCount > settings.maxChunksForDirectGlobal;
-	if (estimate.isLikelyBookLikeDocument || exceedsDirectGlobalTokenLimit || exceedsDirectGlobalChunkLimit) {
+	const needsMoreThanDirectGlobal = estimate.isLikelyBookLikeDocument || exceedsDirectGlobalTokenLimit || exceedsDirectGlobalChunkLimit;
+	if (needsMoreThanDirectGlobal) {
+		if (!estimate.isLikelyBookLikeDocument && settings.maxHierarchyDepth > 1 && estimate.headingCount > 0) {
+			return {
+				recommendedStrategy: "hierarchical-global",
+				reason: "The note is beyond the direct-global limits, so OBCD will compress section knowledge before global ranking.",
+			};
+		}
+
 		if (settings.oversizeStrategy === "chapter-planning" && estimate.headingCount > 0) {
 			return {
 				recommendedStrategy: "chapter-planning",

@@ -441,7 +441,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Max hierarchy depth")
-			.setDesc("Reserved for future hierarchical summarization. The current build keeps this for forward-compatible planning limits.")
+			.setDesc("Controls whether the plugin may compress section knowledge before document ranking. Values above 1 enable hierarchical global generation.")
 			.addText((text) => text
 				.setPlaceholder("2")
 				.setValue(String(this.plugin.settings.generation.maxHierarchyDepth))

@@ -43,6 +43,13 @@ function groupChunksByTopLevelSection(chunks: ContentChunk[]): Array<{ key: stri
 
 function buildPlanningSection(chunks: ContentChunk[]): PlanningSection {
 	const firstChunk = chunks[0]!;
+	const range = chunks.reduce((result, chunk) => ({
+		from: Math.min(result.from, chunk.range.from),
+		to: Math.max(result.to, chunk.range.to),
+	}), {
+		from: firstChunk.range.from,
+		to: firstChunk.range.to,
+	});
 	const combinedLength = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
 	const averageChunkLength = combinedLength / Math.max(chunks.length, 1);
 	const subsectionCount = new Set(
@@ -56,6 +63,8 @@ function buildPlanningSection(chunks: ContentChunk[]): PlanningSection {
 		sectionKey: firstChunk.sectionKey,
 		title: firstChunk.headingPath[0] ?? firstChunk.titleHint ?? firstChunk.file.basename,
 		headingPath: [...firstChunk.headingPath],
+		range,
+		chunkCount: chunks.length,
 		summary: makePreview(chunks.map((chunk) => chunk.text).join(" "), 180),
 		estimatedCardValueDensity: density,
 		recommended: false,

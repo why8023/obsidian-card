@@ -52,6 +52,24 @@ export function buildGlobalRankingPrompt(
 	], customInstruction);
 }
 
+export function buildSectionAggregationPrompt(
+	options: {
+		maxSummaryTopics: number;
+	},
+	customInstruction: string,
+): string {
+	return withCustomInstruction([
+		"You compress section-level knowledge units into a smaller set of representative section topics.",
+		"Merge duplicates and closely related points, but keep the section's core knowledge skeleton intact.",
+		"Prefer core concepts and key conclusions over examples, context, and minor details.",
+		`Return at most ${options.maxSummaryTopics} section topics.`,
+		"Each topic must contain: statement, importanceLocal, candidateQuestionIntent, evidenceExcerpt, memberUnitIds.",
+		"importanceLocal must be a number from 0 to 1.",
+		"memberUnitIds must reference only the unit ids from the input.",
+		"Return only JSON in the shape {\"topics\": [...]} with no markdown fences or commentary.",
+	], customInstruction);
+}
+
 export function buildCardCompositionPrompt(
 	options: {
 		cardCount: number;

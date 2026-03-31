@@ -1,6 +1,6 @@
 import type { TFile } from "obsidian";
 
-export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
+export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file" | "section-file";
 export type ContentChunkKind = "selection" | "section";
 export type CardBlockKind = "selection" | "heading" | "preamble";
 export type GenerationStrategy = "direct-global" | "hierarchical-global" | "chapter-planning" | "refuse-or-scope";
@@ -66,6 +66,7 @@ export interface ScopeEstimate {
 
 export interface KnowledgeUnit {
 	id: string;
+	sourceUnitIds: string[];
 	filePath: string;
 	sectionKey: string;
 	headingPath: string[];
@@ -114,6 +115,8 @@ export interface PlanningSection {
 	sectionKey: string;
 	title: string;
 	headingPath: string[];
+	range: TextRange;
+	chunkCount: number;
 	summary: string;
 	estimatedCardValueDensity: number;
 	recommended: boolean;
