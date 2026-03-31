@@ -202,8 +202,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 		const templateOptions = listPromptTemplateFiles(this.app, this.plugin.settings.prompts.templatesFolder);
 
 		new Setting(containerEl)
-			.setName("Provider")
-			.setDesc("Configure the service used to generate flashcard candidates.")
+			.setName("模型服务")
+			.setDesc("配置用于生成卡片候选结果的大模型服务。")
 			.setHeading();
 
 		containerEl.createEl("p", {
@@ -212,8 +212,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName("Provider preset")
-			.setDesc("Choose a provider profile, then adjust the resolved base URL if needed.")
+			.setName("服务商预设")
+			.setDesc("先选择平台预设，再按需调整实际请求的 Base URL。")
 			.addDropdown((dropdown) => {
 				for (const [presetType, info] of Object.entries(PROVIDER_PRESET_INFO) as Array<[FlashcardProviderPresetType, typeof presetInfo]>) {
 					dropdown.addOption(presetType, info.label);
@@ -243,8 +243,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Base URL")
-			.setDesc("Base URL only. The chat completions path is appended automatically.")
+			.setName("基础 URL")
+			.setDesc("这里只填写基础地址，插件会自动补上 chat completions 路径。")
 			.addText((text) => text
 				.setPlaceholder(PROVIDER_PRESET_INFO[activeProvider.presetType].defaultBaseUrl)
 				.setValue(activeProvider.baseUrl)
@@ -257,14 +257,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Access key")
+			.setName("API Key")
 			.setDesc(presetInfo.requireApiKey
-				? "Required for this provider preset."
-				: "Optional for local or proxy providers.")
+				? "当前预设必须填写。"
+				: "本地服务或代理服务可选。")
 			.addText((text) => {
 				text.inputEl.type = "password";
 				text
-					.setPlaceholder("Enter access key")
+					.setPlaceholder("输入 API Key")
 					.setValue(activeProvider.apiKey)
 					.onChange(async (value) => {
 						this.updateActiveProvider({
@@ -276,20 +276,20 @@ export class ObcdSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Resolved request URL")
-			.setDesc("Computed from the preset and base URL. This is the final endpoint used for generation.")
+			.setName("最终请求地址")
+			.setDesc("根据预设和 Base URL 自动计算。这是插件实际发起生成请求的终点地址。")
 			.addText((text) => text
 				.setValue(getProviderChatCompletionsUrl(activeProvider))
 				.setDisabled(true));
 
 		new Setting(containerEl)
-			.setName("Generation")
-			.setDesc("Model and sampling options used after the provider is resolved.")
+			.setName("生成参数")
+			.setDesc("配置模型名称和采样参数。")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Model name")
-			.setDesc(`Recommended default for ${presetInfo.label}: ${presetInfo.defaultModel}`)
+			.setName("模型名称")
+			.setDesc(`${presetInfo.label} 推荐默认值：${presetInfo.defaultModel}`)
 			.addText((text) => text
 				.setPlaceholder(presetInfo.defaultModel)
 				.setValue(this.plugin.settings.generation.model)
@@ -299,8 +299,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Core card budget")
-			.setDesc("Core topics consume this budget first. The model may still generate fewer cards when the note is sparse.")
+			.setName("核心卡片预算")
+			.setDesc("优先分配给核心主题。若笔记内容较少，实际生成数量仍可能低于该值。")
 			.addText((text) => text
 				.setPlaceholder("6")
 				.setValue(String(this.plugin.settings.generation.coreCardBudget))
@@ -313,8 +313,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Secondary card budget")
-			.setDesc("Optional follow-up cards for non-core topics. Set to 0 to generate only the main knowledge skeleton.")
+			.setName("次级卡片预算")
+			.setDesc("用于非核心主题的补充卡片。设为 0 时只生成主要知识骨架。")
 			.addText((text) => text
 				.setPlaceholder("4")
 				.setValue(String(this.plugin.settings.generation.secondaryCardBudget))
@@ -327,8 +327,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Max total cards per document")
-			.setDesc("Hard ceiling across core and secondary topics for one file-level run.")
+			.setName("单篇文档最大卡片数")
+			.setDesc("单次整篇文档生成时，核心和次级主题合计的硬上限。")
 			.addText((text) => text
 				.setPlaceholder("10")
 				.setValue(String(this.plugin.settings.generation.maxTotalCardsPerDocument))
@@ -341,8 +341,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Max cards per topic")
-			.setDesc("Prevents one merged topic from expanding into too many cards.")
+			.setName("单个主题最大卡片数")
+			.setDesc("防止某个合并后的主题扩展出过多卡片。")
 			.addText((text) => text
 				.setPlaceholder("2")
 				.setValue(String(this.plugin.settings.generation.maxCardsPerTopic))
@@ -355,8 +355,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Max knowledge units per chunk")
-			.setDesc("Caps how many candidate knowledge points are extracted from one chunk before global ranking.")
+			.setName("每个分块最大知识单元数")
+			.setDesc("限制全局排序前，每个文本分块最多提取多少个候选知识点。")
 			.addText((text) => text
 				.setPlaceholder("4")
 				.setValue(String(this.plugin.settings.generation.maxKnowledgeUnitsPerChunk))
@@ -370,8 +370,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Direct-global chunk limit")
-			.setDesc("If a file exceeds this chunk count, the plugin stops doing direct global generation.")
+			.setName("直接全局生成的分块上限")
+			.setDesc("如果文档分块数超过这个值，插件将不再使用直接全局生成流程。")
 			.addText((text) => text
 				.setPlaceholder("18")
 				.setValue(String(this.plugin.settings.generation.maxChunksForDirectGlobal))
@@ -384,8 +384,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Direct-global token limit")
-			.setDesc("Estimated token ceiling for a note to stay in the full-document ranking flow.")
+			.setName("直接全局生成的 Token 上限")
+			.setDesc("估算的整篇文档 Token 上限。超过后将退出完整文档排序流程。")
 			.addText((text) => text
 				.setPlaceholder("12000")
 				.setValue(String(this.plugin.settings.generation.maxTokensForDirectGlobal))
@@ -398,8 +398,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Task token limit")
-			.setDesc("Hard stop for one run. Oversized files downgrade or refuse before generation starts.")
+			.setName("单次任务 Token 上限")
+			.setDesc("单次生成任务的硬上限。超大文件会在开始前降级处理或直接拒绝。")
 			.addText((text) => text
 				.setPlaceholder("22000")
 				.setValue(String(this.plugin.settings.generation.maxTaskInputTokens))
@@ -412,8 +412,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Task chunk limit")
-			.setDesc("Hard stop for the total number of chunks in one run.")
+			.setName("单次任务分块上限")
+			.setDesc("单次生成任务中允许处理的分块总数上限。")
 			.addText((text) => text
 				.setPlaceholder("36")
 				.setValue(String(this.plugin.settings.generation.maxTaskChunks))
@@ -426,8 +426,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Task API call limit")
-			.setDesc("Hard stop for the total extraction, ranking, and composition calls in one run.")
+			.setName("单次任务 API 调用上限")
+			.setDesc("单次任务中抽取、排序和组合阶段允许的总调用次数上限。")
 			.addText((text) => text
 				.setPlaceholder("48")
 				.setValue(String(this.plugin.settings.generation.maxTaskLlmCalls))
@@ -440,8 +440,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Max hierarchy depth")
-			.setDesc("Controls whether the plugin may compress section knowledge before document ranking. Values above 1 enable hierarchical global generation.")
+			.setName("最大层级深度")
+			.setDesc("控制插件在文档级排序前是否先压缩章节知识。大于 1 时启用分层全局生成。")
 			.addText((text) => text
 				.setPlaceholder("2")
 				.setValue(String(this.plugin.settings.generation.maxHierarchyDepth))
@@ -454,11 +454,11 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Oversize behavior")
-			.setDesc("Choose whether oversized notes should produce a chapter plan or stop and ask you to scope down.")
+			.setName("超大文档处理方式")
+			.setDesc("决定超大笔记是降级为章节规划，还是直接停止并提示缩小范围。")
 			.addDropdown((dropdown) => dropdown
-				.addOption("chapter-planning", "Downgrade to chapter planning")
-				.addOption("refuse-or-scope", "Refuse and ask to scope down")
+				.addOption("chapter-planning", "降级为章节规划")
+				.addOption("refuse-or-scope", "停止并提示缩小范围")
 				.setValue(this.plugin.settings.generation.oversizeStrategy)
 				.onChange(async (value) => {
 					this.plugin.settings.generation.oversizeStrategy = value as OversizeStrategy;
@@ -466,11 +466,11 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Regeneration policy")
-			.setDesc("Control whether file-level runs replace all plugin cards in the file or only rebuild cards inside the current scope.")
+			.setName("重新生成策略")
+			.setDesc("控制整篇运行时，是替换文件中所有插件卡片，还是仅重建当前范围内的卡片。")
 			.addDropdown((dropdown) => dropdown
-				.addOption("full-document-rebuild", "Full document rebuild")
-				.addOption("scope-rebuild", "Scope-only rebuild")
+				.addOption("full-document-rebuild", "重建整篇文档")
+				.addOption("scope-rebuild", "仅重建当前范围")
 				.setValue(this.plugin.settings.generation.defaultRegenerationPolicy)
 				.onChange(async (value) => {
 					this.plugin.settings.generation.defaultRegenerationPolicy = value as RegenerationPolicy;
@@ -478,8 +478,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Temperature")
-			.setDesc("Lower values keep extraction, ranking, and composition tighter and more predictable.")
+			.setName("温度")
+			.setDesc("值越低，抽取、排序和卡片组合会越稳定、越可预测。")
 			.addText((text) => text
 				.setPlaceholder("0.2")
 				.setValue(String(this.plugin.settings.generation.temperature))
@@ -492,8 +492,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Add default tag")
-			.setDesc("Append the configured default tag to every generated card before insertion.")
+			.setName("追加默认标签")
+			.setDesc("在插入前，为每张生成的卡片自动附加默认标签。")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.generation.addObcdTag)
 				.onChange(async (value) => {
@@ -502,8 +502,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Default tag")
-			.setDesc("Single tag appended when the default-tag option is enabled.")
+			.setName("默认标签")
+			.setDesc("启用默认标签后，为每张卡片附加这一项单独标签。")
 			.addText((text) => text
 				.setPlaceholder(DEFAULT_GENERATED_CARD_TAG)
 				.setValue(this.plugin.settings.generation.defaultTag)
@@ -513,16 +513,16 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Prompts")
-			.setDesc("Choose shared prompt instructions that are appended to extraction, ranking, planning, and composition.")
+			.setName("提示词")
+			.setDesc("配置会追加到抽取、排序、规划和组合阶段的共享提示词。")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Global prompt")
-			.setDesc("Shared guidance used when no folder rule matches. Leave empty to rely on the built-in workflow prompts.")
+			.setName("全局提示词")
+			.setDesc("当没有任何文件夹规则命中时使用。留空则仅使用插件内置工作流提示词。")
 			.addTextArea((textArea) => {
 				textArea
-					.setPlaceholder("Describe additional generation preferences for this vault.")
+					.setPlaceholder("补充这个仓库或知识库的统一生成偏好。")
 					.setValue(this.plugin.settings.prompts.globalPrompt)
 					.onChange(async (value) => {
 						this.plugin.settings.prompts.globalPrompt = value;
@@ -534,8 +534,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 			});
 
 		new Setting(containerEl)
-			.setName("Prompt templates folder")
-			.setDesc("Vault-relative folder containing Markdown prompt templates. Use / for the vault root.")
+			.setName("提示词模板文件夹")
+			.setDesc("填写仓库内用于存放 Markdown 提示词模板的相对路径。仓库根目录用 / 表示。")
 			.addText((text) => {
 				text
 					.setPlaceholder("Prompts/flashcards")
@@ -554,10 +554,10 @@ export class ObcdSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName("Folder prompt rules")
-			.setDesc("The closest matching folder wins. Rules apply to that folder and all of its descendants.")
+			.setName("文件夹提示词规则")
+			.setDesc("按最近匹配原则生效。规则会应用到该文件夹及其所有子目录。")
 			.addButton((button) => button
-				.setButtonText("Add rule")
+				.setButtonText("添加规则")
 				.onClick(async () => {
 					this.plugin.settings.prompts.folderRules = [
 						...this.plugin.settings.prompts.folderRules,
@@ -570,14 +570,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 		if (this.plugin.settings.prompts.folderRules.length === 0) {
 			containerEl.createEl("p", {
 				cls: "obcd-settings-hint",
-				text: "No folder prompt rules yet.",
+				text: "当前还没有文件夹提示词规则。",
 			});
 		}
 
 		this.plugin.settings.prompts.folderRules.forEach((rule, index) => {
 			new Setting(containerEl)
-				.setName(`Folder rule ${index + 1}`)
-				.setDesc("Map a note folder to a prompt template file from the configured templates folder.")
+				.setName(`文件夹规则 ${index + 1}`)
+				.setDesc("将笔记文件夹映射到已配置模板目录中的某个提示词模板文件。")
 				.addText((text) => text
 					.setPlaceholder("Projects/biology")
 					.setValue(rule.noteFolder)
@@ -587,7 +587,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 						});
 					}))
 				.addDropdown((dropdown) => {
-					dropdown.addOption("", templateOptions.length === 0 ? "No templates found" : "Select a template");
+					dropdown.addOption("", templateOptions.length === 0 ? "未找到模板" : "选择模板");
 
 					for (const templateOption of templateOptions) {
 						dropdown.addOption(templateOption, templateOption);
@@ -595,7 +595,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 					const normalizedTemplatePath = normalizeConfiguredTemplatePath(rule.templatePath);
 					if (normalizedTemplatePath.length > 0 && !templateOptions.includes(normalizedTemplatePath)) {
-						dropdown.addOption(normalizedTemplatePath, `${normalizedTemplatePath} (missing)`);
+						dropdown.addOption(normalizedTemplatePath, `${normalizedTemplatePath}（缺失）`);
 					}
 
 					dropdown
@@ -608,7 +608,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 				})
 				.addExtraButton((button) => button
 					.setIcon("trash")
-					.setTooltip("Remove folder rule")
+					.setTooltip("删除文件夹规则")
 					.onClick(async () => {
 						this.plugin.settings.prompts.folderRules = this.plugin.settings.prompts.folderRules
 							.filter((_, currentIndex) => currentIndex !== index);
@@ -618,13 +618,13 @@ export class ObcdSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName("Sidebar")
-			.setDesc("Display settings for the inserted flashcards table in the sidebar.")
+			.setName("侧边栏")
+			.setDesc("配置侧边栏里已插入卡片表格的显示方式。")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Question preview length")
-			.setDesc("Maximum characters shown for each question in the inserted cards table. Range: 20 to 200.")
+			.setName("问题预览长度")
+			.setDesc("控制侧边栏表格中每条问题的最大显示字符数，范围 20 到 200。")
 			.addText((text) => text
 				.setPlaceholder(String(DEFAULT_SIDEBAR_SETTINGS.frontPreviewLength))
 				.setValue(String(this.plugin.settings.sidebar.frontPreviewLength))
@@ -637,13 +637,13 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Compatibility")
-			.setDesc("Integration behavior for notes generated by other plugins.")
+			.setName("兼容性")
+			.setDesc("配置与其他插件生成笔记的兼容行为。")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Enable obar compatibility")
-			.setDesc("When a note frontmatter contains configured obar keys, wrap inserted flashcards in an obar custom note block.")
+			.setName("启用 obar 兼容模式")
+			.setDesc("当笔记 frontmatter 中包含指定 obar 字段时，把插入的卡片包裹到 obar 自定义 note block 中。")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.compatibility.obar.enabled)
 				.onChange(async (value) => {
@@ -652,8 +652,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Obar frontmatter keys")
-			.setDesc("Comma-separated keys. If any configured key is present in frontmatter, the file is treated as an obar record.")
+			.setName("Obar frontmatter 字段")
+			.setDesc("使用逗号分隔。只要 frontmatter 中出现任意一个已配置字段，就把该文件视为 obar 记录。")
 			.addText((text) => text
 				.setPlaceholder(DEFAULT_OBAR_FRONTMATTER_KEYS.join(", "))
 				.setValue(this.plugin.settings.compatibility.obar.frontmatterKeys.join(", "))
@@ -672,13 +672,13 @@ export class ObcdSettingTab extends PluginSettingTab {
 		);
 
 		new Setting(containerEl)
-			.setName("Debug")
-			.setDesc("Verbose logs and saved local data for troubleshooting generation issues.")
+			.setName("调试")
+			.setDesc("开启详细日志并保存本地调试数据，便于排查生成问题。")
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("Debug mode")
-			.setDesc(`Print detailed logs to the developer console and save local debug artifacts to ${debugArtifactsDirectory}. Saved artifacts may include note excerpts and AI responses.`)
+			.setName("调试模式")
+			.setDesc(`将详细日志输出到开发者控制台，并把调试产物保存到 ${debugArtifactsDirectory}。保存的数据可能包含笔记片段和 AI 响应。`)
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.debug.enabled)
 				.onChange(async (value) => {
@@ -696,14 +696,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 	private describePromptTemplateState(templateOptions: string[]): string {
 		const templatesFolder = this.plugin.settings.prompts.templatesFolder;
 		if (templatesFolder.length === 0) {
-			return "Set a prompt templates folder to enable reusable Markdown prompt files.";
+			return "设置提示词模板文件夹后，才能启用可复用的 Markdown 提示词文件。";
 		}
 
 		if (templateOptions.length === 0) {
-			return `No Markdown prompt templates were found in ${templatesFolder}.`;
+			return `${templatesFolder} 中没有找到 Markdown 提示词模板。`;
 		}
 
-		return `${templateOptions.length} prompt template${templateOptions.length === 1 ? "" : "s"} available in ${templatesFolder}.`;
+		return `${templatesFolder} 中可用的提示词模板数量：${templateOptions.length}。`;
 	}
 
 	private async updateFolderPromptRule(index: number, update: Partial<ObcdFolderPromptRule>): Promise<void> {

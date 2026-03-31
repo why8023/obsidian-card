@@ -789,11 +789,11 @@ export class FlashcardWorkflow {
 		const presetInfo = PROVIDER_PRESET_INFO[activeProvider.presetType];
 
 		if (presetInfo.requireApiKey && activeProvider.apiKey.trim().length === 0) {
-			throw new Error("Configure the provider access key in plugin settings before generating flashcards.");
+			throw new Error("请先在插件设置中填写当前模型服务的 API Key，再生成卡片。");
 		}
 
 		if (this.plugin.settings.generation.model.trim().length === 0) {
-			throw new Error("Configure the AI model in plugin settings before generating flashcards.");
+			throw new Error("请先在插件设置中填写模型名称，再生成卡片。");
 		}
 	}
 

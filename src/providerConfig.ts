@@ -1,6 +1,7 @@
 export type FlashcardProviderPresetType =
 	| "openrouter"
 	| "openai"
+	| "alibaba-bailian"
 	| "openai-compatible"
 	| "ollama"
 	| "lm-studio";
@@ -23,35 +24,42 @@ export interface ProviderPresetInfo {
 export const PROVIDER_PRESET_INFO: Record<FlashcardProviderPresetType, ProviderPresetInfo> = {
 	openrouter: {
 		label: "OpenRouter",
-		description: "Use OpenRouter through its OpenAI-compatible /api/v1 chat completions endpoint.",
+		description: "通过 OpenAI 兼容的 /api/v1/chat/completions 接口使用 OpenRouter。",
 		defaultBaseUrl: "https://openrouter.ai/api/v1",
 		defaultModel: "openai/gpt-4.1-mini",
 		requireApiKey: true,
 	},
 	openai: {
 		label: "OpenAI",
-		description: "Use the official OpenAI API with the standard /v1 chat completions path.",
+		description: "使用官方 OpenAI API，默认走标准的 /v1/chat/completions 路径。",
 		defaultBaseUrl: "https://api.openai.com/v1",
 		defaultModel: "gpt-4.1-mini",
 		requireApiKey: true,
 	},
+	"alibaba-bailian": {
+		label: "阿里云百炼",
+		description: "使用阿里云百炼的 OpenAI 兼容接口。默认填写中国内地（北京）地域地址，如需新加坡、美国或其他地域，请手动修改 Base URL。",
+		defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+		defaultModel: "qwen-plus",
+		requireApiKey: true,
+	},
 	"openai-compatible": {
-		label: "OpenAI compatible",
-		description: "Use any provider that exposes an OpenAI-compatible chat completions API.",
+		label: "OpenAI 兼容接口",
+		description: "适用于任何提供 OpenAI 兼容 chat completions API 的服务。",
 		defaultBaseUrl: "https://api.openai.com/v1",
 		defaultModel: "gpt-4.1-mini",
 		requireApiKey: false,
 	},
 	ollama: {
 		label: "Ollama",
-		description: "Use a local Ollama server through its OpenAI-compatible endpoint.",
+		description: "通过 OpenAI 兼容接口连接本地 Ollama 服务。",
 		defaultBaseUrl: "http://127.0.0.1:11434/v1",
 		defaultModel: "llama3.1",
 		requireApiKey: false,
 	},
 	"lm-studio": {
 		label: "LM Studio",
-		description: "Use a local LM Studio server through its OpenAI-compatible endpoint.",
+		description: "通过 OpenAI 兼容接口连接本地 LM Studio 服务。",
 		defaultBaseUrl: "http://127.0.0.1:1234/v1",
 		defaultModel: "local-model",
 		requireApiKey: false,
