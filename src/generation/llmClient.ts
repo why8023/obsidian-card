@@ -20,6 +20,8 @@ interface ChatMessage {
 	content: string;
 }
 
+const CONNECTION_TEST_MAX_TOKENS = 16;
+
 export class LlmClient {
 	constructor(
 		private readonly settings: ObcdSettings,
@@ -77,7 +79,7 @@ export class LlmClient {
 		const requestBody = {
 			model: this.settings.generation.model,
 			temperature: 0,
-			max_tokens: 1,
+			max_tokens: CONNECTION_TEST_MAX_TOKENS,
 			messages: [
 				{
 					role: "user" as const,

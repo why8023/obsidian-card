@@ -32,6 +32,7 @@ import type {
 	TextRange,
 	TopicCompositionResult,
 } from "../types";
+import { mapWithConcurrency } from "../utils/concurrency";
 import { CardComposer } from "../composition/cardComposer";
 import { writeApprovedCardGroups, type CardRegenerationOptions } from "../writing/flashcardWriter";
 
@@ -469,36 +470,48 @@ export class FlashcardWorkflow {
 		progressContext: GenerationProgressContext,
 	): Promise<KnowledgeUnit[]> {
 		const extractor = new KnowledgeExtractor(this.plugin.settings, customPrompt, debugRun);
-		const units: KnowledgeUnit[] = [];
-		const chunkErrors: string[] = [];
+		const maxConcurrency = this.resolveLlmConcurrency(chunks.length);
+		const chunkErrors = new Array<string | null>(chunks.length).fill(null);
+		let completedChunks = 0;
 
-		for (const [index, chunk] of chunks.entries()) {
-			const chunkNumber = index + 1;
-			this.updateGenerationProgress(file, mode, progressContext, {
-				phase: "extracting",
-				currentChunkIndex: chunkNumber,
-				totalChunks: chunks.length,
-				fileProgress: this.getPhaseFileProgress(0.16, 0.54, chunks.length, index),
-				detail: this.describeChunkProgress(chunk, chunkNumber, chunks.length),
-			});
+		this.updateGenerationProgress(file, mode, progressContext, {
+			phase: "extracting",
+			currentChunkIndex: 0,
+			totalChunks: chunks.length,
+			fileProgress: 0.16,
+			detail: `Extracting knowledge from ${chunks.length} chunk${chunks.length === 1 ? "" : "s"} with up to ${maxConcurrency} concurrent request${maxConcurrency === 1 ? "" : "s"}.`,
+		});
 
+		const extractedUnits = await mapWithConcurrency(chunks, maxConcurrency, async (chunk, index) => {
 			try {
-				units.push(...await extractor.extract(chunk, index));
+				return await extractor.extract(chunk, index);
 			} catch (error) {
-				chunkErrors.push(`chunk ${chunkNumber}: ${this.getErrorMessage(error)}`);
+				chunkErrors[index] = `chunk ${index + 1}: ${this.getErrorMessage(error)}`;
 				debugRun.recordChunkError(index, error, {
 					filePath: chunk.filePath,
 					titleHint: chunk.titleHint ?? "",
 				});
+				return [];
+			} finally {
+				completedChunks += 1;
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "extracting",
+					currentChunkIndex: completedChunks,
+					totalChunks: chunks.length,
+					fileProgress: this.getPhaseProgressFromCompletionCount(0.16, 0.54, chunks.length, completedChunks),
+					detail: this.describeCompletedChunkProgress(chunk, completedChunks, chunks.length),
+				});
 			}
+		});
+		const units = extractedUnits.flat();
+		const failedChunks = chunkErrors.filter((error): error is string => error !== null);
+
+		if (failedChunks.length > 0 && units.length === 0) {
+			throw new Error(failedChunks.join(" "));
 		}
 
-		if (chunkErrors.length > 0 && units.length === 0) {
-			throw new Error(chunkErrors.join(" "));
-		}
-
-		if (chunkErrors.length > 0) {
-			new Notice(`Some chunks failed during knowledge extraction and were skipped. ${chunkErrors.length} chunk error(s).`, 8000);
+		if (failedChunks.length > 0) {
+			new Notice(`Some chunks failed during knowledge extraction and were skipped. ${failedChunks.length} chunk error(s).`, 8000);
 		}
 
 		return units;
@@ -554,40 +567,67 @@ export class FlashcardWorkflow {
 		const composer = new CardComposer(this.plugin.settings, customPrompt, debugRun);
 		const groupedCards = new Map<string, ApprovedCardGroup>();
 		const seenCards = new Set<string>();
+		const maxConcurrency = this.resolveLlmConcurrency(budgetPlan.selectedTopics.length);
+		let completedTopics = 0;
 
-		for (const [index, allocation] of budgetPlan.selectedTopics.entries()) {
-			const topic = topicsById.get(allocation.topicId);
-			if (!topic) {
+		this.updateGenerationProgress(file, mode, progressContext, {
+			phase: "composing",
+			currentChunkIndex: 0,
+			totalChunks: budgetPlan.selectedTopics.length,
+			fileProgress: 0.7,
+			detail: `Composing cards for ${budgetPlan.selectedTopics.length} topic${budgetPlan.selectedTopics.length === 1 ? "" : "s"} with up to ${maxConcurrency} concurrent request${maxConcurrency === 1 ? "" : "s"}.`,
+		});
+
+		const compositionResults = await mapWithConcurrency(
+			budgetPlan.selectedTopics,
+			maxConcurrency,
+			async (allocation, index) => {
+				const topic = topicsById.get(allocation.topicId);
+				const topicUnits = topic
+					? this.resolveOriginalUnitsForTopic(topic, rankingUnitsById, originalUnitsById)
+					: [];
+
+				try {
+					if (!topic || topicUnits.length === 0) {
+						return null;
+					}
+
+					const composition = await composer.compose({
+						topic,
+						units: topicUnits,
+						cardCount: allocation.cardCount,
+						strategy,
+					} satisfies CompositionRequest, index);
+
+					return {
+						composition,
+						topicUnits,
+					};
+				} catch (error) {
+					debugRun.log("compose:error", "Skipping a topic that failed during composition.", {
+						topicId: topic?.topicId ?? allocation.topicId,
+						error: this.getErrorMessage(error),
+					});
+					return null;
+				} finally {
+					completedTopics += 1;
+					this.updateGenerationProgress(file, mode, progressContext, {
+						phase: "composing",
+						currentChunkIndex: completedTopics,
+						totalChunks: budgetPlan.selectedTopics.length,
+						fileProgress: this.getPhaseProgressFromCompletionCount(0.7, 0.9, budgetPlan.selectedTopics.length, completedTopics),
+						detail: this.describeCompletedTopicProgress(topic, allocation.topicId, completedTopics, budgetPlan.selectedTopics.length),
+					});
+				}
+			},
+		);
+
+		for (const result of compositionResults) {
+			if (!result) {
 				continue;
 			}
 
-			const topicUnits = this.resolveOriginalUnitsForTopic(topic, rankingUnitsById, originalUnitsById);
-			if (topicUnits.length === 0) {
-				continue;
-			}
-
-			this.updateGenerationProgress(file, mode, progressContext, {
-				phase: "composing",
-				currentChunkIndex: index + 1,
-				totalChunks: budgetPlan.selectedTopics.length,
-				fileProgress: this.getPhaseFileProgress(0.7, 0.9, budgetPlan.selectedTopics.length, index),
-				detail: `Composing cards for topic ${index + 1}/${budgetPlan.selectedTopics.length}: ${topic.canonicalStatement}`,
-			});
-
-			try {
-				const composition = await composer.compose({
-					topic,
-					units: topicUnits,
-					cardCount: allocation.cardCount,
-					strategy,
-				} satisfies CompositionRequest, index);
-				this.appendComposedCards(composition, topicUnits, chunksBySectionKey, groupedCards, seenCards);
-			} catch (error) {
-				debugRun.log("compose:error", "Skipping a topic that failed during composition.", {
-					topicId: topic.topicId,
-					error: this.getErrorMessage(error),
-				});
-			}
+			this.appendComposedCards(result.composition, result.topicUnits, chunksBySectionKey, groupedCards, seenCards);
 		}
 
 		return Array.from(groupedCards.values())
@@ -901,6 +941,26 @@ export class FlashcardWorkflow {
 		return start + (((completedItems + 1) / totalItems) * (end - start));
 	}
 
+	private getPhaseProgressFromCompletionCount(start: number, end: number, totalItems: number, completedItems: number): number {
+		if (totalItems <= 0) {
+			return end;
+		}
+
+		const normalizedCompletedItems = Math.max(0, Math.min(totalItems, completedItems));
+		return start + ((normalizedCompletedItems / totalItems) * (end - start));
+	}
+
+	private resolveLlmConcurrency(taskCount: number): number {
+		if (taskCount <= 0) {
+			return 1;
+		}
+
+		return Math.max(
+			1,
+			Math.min(taskCount, this.plugin.settings.generation.maxConcurrentLlmRequests),
+		);
+	}
+
 	private describeRankingProgress(strategy: GenerationStrategy, unitCount: number): string {
 		if (strategy === "hierarchical-global") {
 			return `Ranking ${unitCount} section summary unit${unitCount === 1 ? "" : "s"} across the document.`;
@@ -909,13 +969,23 @@ export class FlashcardWorkflow {
 		return `Ranking ${unitCount} knowledge unit${unitCount === 1 ? "" : "s"} across the document.`;
 	}
 
-	private describeChunkProgress(chunk: ContentChunk, chunkNumber: number, totalChunks: number): string {
+	private describeCompletedChunkProgress(chunk: ContentChunk, completedChunks: number, totalChunks: number): string {
 		const title = chunk.titleHint?.trim() ?? "";
 		if (title.length > 0) {
-			return `Extracting knowledge from chunk ${chunkNumber}/${totalChunks}: ${title}`;
+			return `Completed knowledge extraction for ${completedChunks}/${totalChunks} chunk${totalChunks === 1 ? "" : "s"}. Latest: ${title}`;
 		}
 
-		return `Extracting knowledge from chunk ${chunkNumber}/${totalChunks}.`;
+		return `Completed knowledge extraction for ${completedChunks}/${totalChunks} chunk${totalChunks === 1 ? "" : "s"}.`;
+	}
+
+	private describeCompletedTopicProgress(
+		topic: KnowledgeTopic | undefined,
+		topicId: string,
+		completedTopics: number,
+		totalTopics: number,
+	): string {
+		const topicLabel = topic?.canonicalStatement.trim() || topicId;
+		return `Completed card composition for ${completedTopics}/${totalTopics} topic${totalTopics === 1 ? "" : "s"}. Latest: ${topicLabel}`;
 	}
 
 	private describePlanningResult(plan: PlanningResult): string {

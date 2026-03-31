@@ -23,7 +23,7 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 10;
+const SETTINGS_SCHEMA_VERSION = 11;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
 export type OversizeStrategy = "chapter-planning" | "refuse-or-scope";
@@ -32,6 +32,7 @@ export type RegenerationPolicy = "full-document-rebuild" | "scope-rebuild";
 export interface FlashcardGenerationSettings {
 	model: string;
 	temperature: number;
+	maxConcurrentLlmRequests: number;
 	addObcdTag: boolean;
 	defaultTag: string;
 	coreCardBudget: number;
@@ -93,6 +94,7 @@ export interface ObcdSettings {
 export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	model: getDefaultModelForPreset("openrouter"),
 	temperature: 0.2,
+	maxConcurrentLlmRequests: 3,
 	addObcdTag: true,
 	defaultTag: DEFAULT_GENERATED_CARD_TAG,
 	coreCardBudget: 6,
@@ -467,6 +469,20 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
+			.setName("并行 API 请求上限")
+			.setDesc("独立分块、章节摘要和主题制卡阶段最多同时发起多少个请求。过高可能触发模型服务限流。")
+			.addText((text) => text
+				.setPlaceholder("3")
+				.setValue(String(this.plugin.settings.generation.maxConcurrentLlmRequests))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue >= 1 && parsedValue <= 12) {
+						this.plugin.settings.generation.maxConcurrentLlmRequests = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
 			.setName("最大层级深度")
 			.setDesc("控制插件在文档级排序前是否先压缩章节知识。大于 1 时启用分层全局生成。")
 			.addText((text) => text
@@ -791,6 +807,11 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 	return {
 		model: readString(generationSource.model, fallback.model),
 		temperature: readNumber(generationSource.temperature, fallback.temperature, { min: 0, max: 2 }),
+		maxConcurrentLlmRequests: readNumber(
+			generationSource.maxConcurrentLlmRequests,
+			fallback.maxConcurrentLlmRequests,
+			{ min: 1, max: 12 },
+		),
 		addObcdTag: readBoolean(generationSource.addObcdTag, fallback.addObcdTag),
 		defaultTag: normalizeConfiguredDefaultTag(generationSource.defaultTag, fallback.defaultTag),
 		coreCardBudget: readNumber(generationSource.coreCardBudget, fallback.coreCardBudget, { min: 1, max: 50 }),

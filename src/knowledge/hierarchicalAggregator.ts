@@ -3,6 +3,7 @@ import { LlmClient } from "../generation/llmClient";
 import { buildSectionAggregationPrompt } from "../prompts/promptDefaults";
 import type { ObcdSettings } from "../settings";
 import type { ContentChunk, KnowledgeUnit } from "../types";
+import { mapWithConcurrency } from "../utils/concurrency";
 import { collapseWhitespace, hashContent } from "../utils/markdown";
 
 interface SectionTopicResponse {
@@ -29,29 +30,29 @@ export class HierarchicalAggregator {
 
 	async aggregate(chunks: ContentChunk[], units: KnowledgeUnit[]): Promise<KnowledgeUnit[]> {
 		const sectionGroups = buildSectionGroups(chunks, units);
-		const aggregatedUnits: KnowledgeUnit[] = [];
-
-		for (const [index, group] of sectionGroups.entries()) {
-			if (group.units.length <= this.settings.generation.maxKnowledgeUnitsPerChunk) {
-				aggregatedUnits.push(...group.units);
-				continue;
-			}
-
-			try {
-				const sectionUnits = await this.aggregateSection(group, index);
-				if (sectionUnits.length > 0) {
-					aggregatedUnits.push(...sectionUnits);
-					continue;
+		const aggregatedUnits = (await mapWithConcurrency(
+			sectionGroups,
+			this.settings.generation.maxConcurrentLlmRequests,
+			async (group, index) => {
+				if (group.units.length <= this.settings.generation.maxKnowledgeUnitsPerChunk) {
+					return group.units;
 				}
-			} catch (error) {
-				this.debugRun?.log("hierarchy:section-fallback", "Section aggregation fell back to heuristic compression.", {
-					sectionKey: group.sectionKey,
-					error: error instanceof Error ? error.message : String(error),
-				});
-			}
 
-			aggregatedUnits.push(...compressSectionHeuristically(group, this.settings.generation.maxKnowledgeUnitsPerChunk));
-		}
+				try {
+					const sectionUnits = await this.aggregateSection(group, index);
+					if (sectionUnits.length > 0) {
+						return sectionUnits;
+					}
+				} catch (error) {
+					this.debugRun?.log("hierarchy:section-fallback", "Section aggregation fell back to heuristic compression.", {
+						sectionKey: group.sectionKey,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+
+				return compressSectionHeuristically(group, this.settings.generation.maxKnowledgeUnitsPerChunk);
+			},
+		)).flat();
 
 		this.debugRun?.log("hierarchy:aggregate", "Built hierarchical section summaries.", {
 			originalUnitCount: units.length,
