@@ -1,7 +1,6 @@
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 
 import type { ObcdFolderPromptRule, ObcdPromptSettings } from "../settings";
-import { DEFAULT_FLASHCARD_PROMPT } from "./promptDefaults";
 
 export interface ResolvedGenerationPrompt {
 	prompt: string;
@@ -86,7 +85,7 @@ export async function resolveGenerationPrompt(
 	}
 
 	return {
-		prompt: DEFAULT_FLASHCARD_PROMPT,
+		prompt: "",
 		source: "default",
 	};
 }

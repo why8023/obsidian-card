@@ -163,7 +163,7 @@ export class CardSidebarView extends ItemView {
 		if (progress.totalChunks > 0) {
 			chipsEl.createEl("span", {
 				cls: "obcd-sidebar-chip",
-				text: `Chunk ${Math.min(progress.currentChunkIndex, progress.totalChunks)}/${progress.totalChunks}`,
+				text: `${this.getGenerationUnitLabel(progress.phase)} ${Math.min(progress.currentChunkIndex, progress.totalChunks)}/${progress.totalChunks}`,
 			});
 		}
 
@@ -668,14 +668,31 @@ export class CardSidebarView extends ItemView {
 		switch (phase) {
 			case "preparing":
 				return "Preparing";
-			case "generating":
-				return "Generating";
-			case "reviewing":
-				return "Preparing cards";
+			case "estimating":
+				return "Estimating";
+			case "extracting":
+				return "Extracting";
+			case "ranking":
+				return "Ranking";
+			case "composing":
+				return "Composing";
 			case "writing":
 				return "Writing";
+			case "planning-only":
+				return "Planning";
 			default:
 				return phase;
+		}
+	}
+
+	private getGenerationUnitLabel(phase: NonNullable<CardSidebarSnapshot["generationProgress"]>["phase"]): string {
+		switch (phase) {
+			case "composing":
+				return "Topic";
+			case "planning-only":
+				return "Section";
+			default:
+				return "Chunk";
 		}
 	}
 

@@ -7,12 +7,18 @@ import { GENERATED_CARD_TYPE } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { detectNewline } from "../utils/markdown";
 
+export interface CardRegenerationOptions {
+	mode: "none" | "all-plugin-generated" | "scoped-plugin-generated";
+	ranges?: TextRange[];
+}
+
 export async function writeApprovedCardGroups(
 	vault: Vault,
 	file: TFile,
 	groups: ApprovedCardGroup[],
 	options?: {
 		obarCompatibility?: ObarCompatibilityConfig;
+		regeneration?: CardRegenerationOptions;
 	},
 ): Promise<number> {
 	if (groups.length === 0) {
@@ -21,7 +27,8 @@ export async function writeApprovedCardGroups(
 
 	let insertedCount = 0;
 	await vault.process(file, (content) => {
-		const result = insertCardGroups(content, groups, options);
+		const preparedContent = pruneCardsBeforeInsert(file, content, options?.regeneration);
+		const result = insertCardGroups(preparedContent, groups, options);
 		insertedCount = result.insertedCount;
 		return result.content;
 	});
@@ -104,6 +111,7 @@ function insertCardGroups(
 	groups: ApprovedCardGroup[],
 	options?: {
 		obarCompatibility?: ObarCompatibilityConfig;
+		regeneration?: CardRegenerationOptions;
 	},
 ): { content: string; insertedCount: number } {
 	const newline = detectNewline(content);
@@ -129,6 +137,39 @@ function insertCardGroups(
 		content: workingContent,
 		insertedCount,
 	};
+}
+
+function pruneCardsBeforeInsert(file: TFile, content: string, regeneration: CardRegenerationOptions | undefined): string {
+	if (!regeneration || regeneration.mode === "none") {
+		return content;
+	}
+
+	const entries = collectExistingCardEntries(file, content);
+	const rangesToRemove = entries
+		.filter((entry) => entry.isPluginGenerated)
+		.filter((entry) => shouldRemoveEntryForRegeneration(entry.blockRange, regeneration))
+		.map((entry) => entry.blockRange);
+
+	if (rangesToRemove.length === 0) {
+		return content;
+	}
+
+	const newline = detectNewline(content);
+	return removeRangesWithWhitespaceCleanup(content, mergeRanges(rangesToRemove), newline);
+}
+
+function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions): boolean {
+	if (regeneration.mode === "all-plugin-generated") {
+		return true;
+	}
+
+	const ranges = regeneration.ranges ?? [];
+	return ranges.some((range) => hasScopedOverlap(blockRange, range));
+}
+
+function hasScopedOverlap(blockRange: TextRange, scopeRange: TextRange): boolean {
+	const scopedEnd = scopeRange.to + 32;
+	return blockRange.to >= scopeRange.from && blockRange.from <= scopedEnd;
 }
 
 function renderInsertedCards(cards: GeneratedBasicCard[], newline: string, wrapEachCardWithObar: boolean): string {

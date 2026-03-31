@@ -2,27 +2,36 @@ import { MarkdownView, Notice, TFile } from "obsidian";
 
 import type { Editor, MarkdownFileInfo } from "obsidian";
 
+import type { DebugRun } from "../debug/debugService";
 import type ObcdPlugin from "../main";
-import { AiCardGenerator } from "../generation/cardGenerator";
-import { buildReviewGroups } from "../generation/cardValidator";
-import { buildFileChunks, buildSelectionChunks } from "../generation/contentChunkBuilder";
+import { buildSelectionChunks, buildFileChunks } from "../generation/contentChunkBuilder";
 import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
+import { allocateCardBudget } from "../knowledge/budgetAllocator";
+import { GlobalRanker } from "../knowledge/globalRanker";
+import { KnowledgeExtractor } from "../knowledge/knowledgeExtractor";
+import { buildChapterPlan } from "../planning/chapterPlanner";
+import { estimateScope } from "../planning/scopeEstimator";
 import { resolveGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
 import { DEFAULT_GENERATED_CARD_TAG } from "../settings";
 import type {
 	ApprovedCardGroup,
-	ChunkGenerationResult,
+	BudgetPlan,
+	CompositionRequest,
 	ContentChunk,
 	GeneratedBasicCard,
 	GenerationMode,
 	GenerationProgressPhase,
 	GenerationProgressState,
+	KnowledgeTopic,
+	KnowledgeUnit,
+	PlanningResult,
 	ReviewAction,
-	ReviewGroup,
-	ReviewResult,
+	TextRange,
+	TopicCompositionResult,
 } from "../types";
-import { writeApprovedCardGroups } from "../writing/flashcardWriter";
+import { CardComposer } from "../composition/cardComposer";
+import { writeApprovedCardGroups, type CardRegenerationOptions } from "../writing/flashcardWriter";
 
 interface FileProcessResult {
 	action: ReviewAction;
@@ -50,13 +59,14 @@ export class FlashcardWorkflow {
 				return;
 			}
 
-			const chunks = buildSelectionChunks(target.file, editor.getSelection(), target.selectedRange);
+			const selectedText = editor.getSelection();
+			const chunks = buildSelectionChunks(target.file, selectedText, target.selectedRange);
 			const progressContext = {
 				currentFileIndex: 1,
 				totalFiles: 1,
 			} satisfies GenerationProgressContext;
-			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Analyzing selected content.");
-			await this.processSingleFile(target.file, chunks, false, target.mode, progressContext);
+			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the selected scope.");
+			await this.processSingleFile(target.file, selectedText, chunks, false, target.mode, progressContext);
 		});
 	}
 
@@ -74,8 +84,8 @@ export class FlashcardWorkflow {
 				currentFileIndex: 1,
 				totalFiles: 1,
 			} satisfies GenerationProgressContext;
-			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Analyzing the current note.");
-			await this.processSingleFile(target.file, chunks, false, target.mode, progressContext);
+			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the current note.");
+			await this.processSingleFile(target.file, content, chunks, false, target.mode, progressContext);
 		});
 	}
 
@@ -87,15 +97,17 @@ export class FlashcardWorkflow {
 				return;
 			}
 
-			const chunks = buildFileChunks(target.file, editor.getValue(), {
+			const fullContent = editor.getValue();
+			const scopedContent = fullContent.slice(0, target.cursorOffset);
+			const chunks = buildFileChunks(target.file, fullContent, {
 				upToOffset: target.cursorOffset,
 			});
 			const progressContext = {
 				currentFileIndex: 1,
 				totalFiles: 1,
 			} satisfies GenerationProgressContext;
-			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Analyzing note content up to the cursor.");
-			await this.processSingleFile(target.file, chunks, false, target.mode, progressContext);
+			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the note content up to the cursor.");
+			await this.processSingleFile(target.file, scopedContent, chunks, false, target.mode, progressContext);
 		});
 	}
 
@@ -134,15 +146,13 @@ export class FlashcardWorkflow {
 						chunks.length,
 						`Preparing ${file.basename} from the selected folder.`,
 					);
-					const result = await this.processSingleFile(file, chunks, true, "folder-file", progressContext);
+					const result = await this.processSingleFile(file, content, chunks, true, "folder-file", progressContext);
 
 					processedFiles += 1;
 					insertedCount += result.insertedCount;
-
 					if (result.action === "skip-file" || result.action === "cancel") {
 						skippedFiles += 1;
 					}
-
 					if (result.action === "stop-batch") {
 						stoppedEarly = true;
 						break;
@@ -169,7 +179,6 @@ export class FlashcardWorkflow {
 			}
 
 			new Notice(summaryParts.join(" "), 12000);
-
 			if (errors.length > 0) {
 				console.error("OBCD folder generation errors", errors);
 			}
@@ -178,6 +187,7 @@ export class FlashcardWorkflow {
 
 	private async processSingleFile(
 		file: TFile,
+		contentForPlanning: string,
 		chunks: ContentChunk[],
 		isBatchMode: boolean,
 		mode: GenerationMode,
@@ -196,16 +206,13 @@ export class FlashcardWorkflow {
 
 			if (chunks.length === 0) {
 				this.updateGenerationProgress(file, mode, progressContext, {
-					phase: "generating",
+					phase: "preparing",
 					currentChunkIndex: 0,
 					totalChunks: 0,
 					fileProgress: 1,
-					detail: "No eligible content was found in this file.",
+					detail: "No eligible content was found in this scope.",
 				});
-				const message = mode === "selection"
-					? `No usable content found in ${file.basename}.`
-					: `No uncovered content found in ${file.basename}.`;
-				new Notice(message);
+				new Notice(`No uncovered content found in ${file.basename}.`);
 				const result = {
 					action: isBatchMode ? "skip-file" : "cancel",
 					insertedCount: 0,
@@ -215,100 +222,167 @@ export class FlashcardWorkflow {
 			}
 
 			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
-			const chunkResults = await this.generateChunkResults(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
-			const reviewGroups = this.applyGenerationDefaultsToReviewGroups(buildReviewGroups(chunkResults));
-			debugRun.recordCandidates(reviewGroups.flatMap((group) => group.candidates));
+			const scopeEstimate = estimateScope(mode, contentForPlanning, chunks, this.plugin.settings.generation);
+			debugRun.log("estimate", "Calculated scope estimate.", scopeEstimate);
+			this.updateGenerationProgress(file, mode, progressContext, {
+				phase: "estimating",
+				currentChunkIndex: 0,
+				totalChunks: chunks.length,
+				fileProgress: 0.12,
+				detail: scopeEstimate.reason,
+			});
 
-			if (reviewGroups.length === 0) {
+			if (scopeEstimate.recommendedStrategy === "chapter-planning") {
+				const plan = buildChapterPlan(chunks, scopeEstimate, scopeEstimate.reason);
+				debugRun.log("planning", "Produced a chapter plan instead of generating cards.", plan);
 				this.updateGenerationProgress(file, mode, progressContext, {
-					phase: "reviewing",
-					currentChunkIndex: chunks.length,
-					totalChunks: chunks.length,
+					phase: "planning-only",
+					currentChunkIndex: 0,
+					totalChunks: plan.sections.length,
 					fileProgress: 1,
-					detail: "The generated output did not contain any valid cards.",
+					detail: this.describePlanningResult(plan),
 				});
-				new Notice(`No valid flashcard candidates were generated for ${file.basename}.`);
+				this.notifyPlanningResult(file, plan);
 				const result = {
 					action: isBatchMode ? "skip-file" : "cancel",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
-				await debugRun.finish("no-candidates", result);
+				await debugRun.finish("planning-only", result);
+				return result;
+			}
+
+			if (scopeEstimate.recommendedStrategy === "refuse-or-scope") {
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "planning-only",
+					currentChunkIndex: 0,
+					totalChunks: 0,
+					fileProgress: 1,
+					detail: scopeEstimate.reason,
+				});
+				new Notice(`${file.basename} is too large for one generation run. Scope down to a chapter or selection.`);
+				const result = {
+					action: isBatchMode ? "skip-file" : "cancel",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("refused-oversize", {
+					reason: scopeEstimate.reason,
+				});
+				return result;
+			}
+
+			const knowledgeUnits = await this.extractKnowledgeUnits(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
+			if (knowledgeUnits.length === 0) {
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "extracting",
+					currentChunkIndex: chunks.length,
+					totalChunks: chunks.length,
+					fileProgress: 1,
+					detail: "The scope did not yield durable knowledge units worth turning into cards.",
+				});
+				new Notice(`No useful knowledge units were found in ${file.basename}.`);
+				const result = {
+					action: isBatchMode ? "skip-file" : "cancel",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("no-knowledge-units", result);
 				return result;
 			}
 
 			this.updateGenerationProgress(file, mode, progressContext, {
-				phase: "reviewing",
-				currentChunkIndex: chunks.length,
-				totalChunks: chunks.length,
-				fileProgress: 0.82,
-				detail: "Preparing generated cards for insertion.",
+				phase: "ranking",
+				currentChunkIndex: 0,
+				totalChunks: knowledgeUnits.length,
+				fileProgress: 0.62,
+				detail: `Ranking ${knowledgeUnits.length} knowledge unit${knowledgeUnits.length === 1 ? "" : "s"} across the document.`,
 			});
-			const reviewResult: ReviewResult = {
-				action: "confirm",
-				approvedGroups: reviewGroups.map((group) => ({
-					chunk: group.chunk,
-					cards: group.candidates
-						.filter((candidate) => candidate.approved)
-						.map((candidate) => ({
-							front: candidate.card.front,
-							back: candidate.card.back,
-							tags: [...candidate.card.tags],
-						})),
-				})),
-			};
-			debugRun.recordReview(reviewResult);
+			const topics = await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(knowledgeUnits);
+			debugRun.log("topics", "Built document-level topics.", {
+				topicCount: topics.length,
+				topics,
+			});
 
-			const groupsToWrite = this.buildGroupsToWrite(chunkResults, reviewResult, mode);
-			const approvedCardCount = groupsToWrite.reduce((sum, group) => sum + group.cards.length, 0);
-
-			if (approvedCardCount === 0 && mode === "selection") {
-				this.updateGenerationProgress(file, mode, progressContext, {
-					phase: "reviewing",
-					currentChunkIndex: chunks.length,
-					totalChunks: chunks.length,
-					fileProgress: 1,
-					detail: "No valid cards remained after final validation.",
-				});
-				new Notice(`No flashcards were inserted for ${file.basename}.`);
+			if (topics.length === 0) {
+				new Notice(`No document-level topics survived ranking for ${file.basename}.`);
 				const result = {
-					action: "confirm",
+					action: isBatchMode ? "skip-file" : "cancel",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
-				await debugRun.finish("no-approved-cards", result);
+				await debugRun.finish("no-topics", result);
+				return result;
+			}
+
+			const remainingLlmCalls = this.plugin.settings.generation.maxTaskLlmCalls - chunks.length - 1;
+			const budgetPlan = allocateCardBudget(topics, this.plugin.settings.generation, remainingLlmCalls);
+			debugRun.log("budget", "Allocated document card budget.", budgetPlan);
+
+			if (budgetPlan.selectedTopics.length === 0 || budgetPlan.totalPlannedCards === 0) {
+				new Notice(`The ranked topics in ${file.basename} did not justify any card budget.`);
+				const result = {
+					action: isBatchMode ? "skip-file" : "cancel",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("no-budgeted-topics", result);
+				return result;
+			}
+
+			const composedGroups = await this.composeCardGroups(
+				file,
+				chunks,
+				knowledgeUnits,
+				topics,
+				budgetPlan,
+				resolvedPrompt.prompt,
+				debugRun,
+				mode,
+				progressContext,
+			);
+
+			if (composedGroups.length === 0) {
+				new Notice(`No valid cards were composed for ${file.basename}.`);
+				const result = {
+					action: isBatchMode ? "skip-file" : "cancel",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("no-composed-cards", result);
 				return result;
 			}
 
 			this.updateGenerationProgress(file, mode, progressContext, {
 				phase: "writing",
-				currentChunkIndex: chunks.length,
-				totalChunks: chunks.length,
+				currentChunkIndex: composedGroups.length,
+				totalChunks: composedGroups.length,
 				fileProgress: 0.94,
-				detail: "Writing generated cards into the note.",
+				detail: "Rebuilding cards inside the current scope and writing the final result.",
 			});
-			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groupsToWrite, {
+			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, composedGroups, {
 				obarCompatibility: this.plugin.settings.compatibility.obar,
+				regeneration: this.resolveRegenerationOptions(mode, chunks),
 			});
 			if (!isBatchMode) {
 				await this.plugin.sidebar.refreshFromVault(file);
 			}
-			new Notice(`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"} into ${file.basename}.`);
 			debugRun.recordWrite({
 				insertedCount,
-				approvedCount: approvedCardCount,
+				approvedCount: composedGroups.reduce((sum, group) => sum + group.cards.length, 0),
+			});
+
+			new Notice(`Inserted ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"} into ${file.basename}.`);
+			this.updateGenerationProgress(file, mode, progressContext, {
+				phase: "writing",
+				currentChunkIndex: composedGroups.length,
+				totalChunks: composedGroups.length,
+				fileProgress: 1,
+				detail: `Finished writing ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"}.`,
 			});
 
 			const result = {
 				action: "confirm",
 				insertedCount,
 			} satisfies FileProcessResult;
-			this.updateGenerationProgress(file, mode, progressContext, {
-				phase: "writing",
-				currentChunkIndex: chunks.length,
-				totalChunks: chunks.length,
-				fileProgress: 1,
-				detail: `Finished writing ${insertedCount} flashcard${insertedCount === 1 ? "" : "s"}.`,
+			await debugRun.finish("inserted", {
+				insertedCount,
+				budgetPlan,
 			});
-			await debugRun.finish("inserted", result);
 			return result;
 		} catch (error) {
 			debugRun.recordError("processSingleFile", error, {
@@ -323,103 +397,188 @@ export class FlashcardWorkflow {
 		}
 	}
 
-	private async generateChunkResults(
+	private async extractKnowledgeUnits(
 		chunks: ContentChunk[],
-		generationPrompt: string,
-		debugRun: ReturnType<ObcdPlugin["debug"]["createRun"]>,
+		customPrompt: string,
+		debugRun: DebugRun,
 		file: TFile,
 		mode: GenerationMode,
 		progressContext: GenerationProgressContext,
-	): Promise<ChunkGenerationResult[]> {
-		const generator = new AiCardGenerator(this.plugin.settings, generationPrompt, debugRun);
-		const results: ChunkGenerationResult[] = [];
+	): Promise<KnowledgeUnit[]> {
+		const extractor = new KnowledgeExtractor(this.plugin.settings, customPrompt, debugRun);
+		const units: KnowledgeUnit[] = [];
 		const chunkErrors: string[] = [];
 
 		for (const [index, chunk] of chunks.entries()) {
 			const chunkNumber = index + 1;
 			this.updateGenerationProgress(file, mode, progressContext, {
-				phase: "generating",
+				phase: "extracting",
 				currentChunkIndex: chunkNumber,
 				totalChunks: chunks.length,
-				fileProgress: this.getChunkFileProgress(chunks.length, index),
+				fileProgress: this.getPhaseFileProgress(0.16, 0.54, chunks.length, index),
 				detail: this.describeChunkProgress(chunk, chunkNumber, chunks.length),
 			});
+
 			try {
-				const cards = await generator.generate(chunk, index);
-				results.push({
-					chunk,
-					cards,
-				});
-				this.updateGenerationProgress(file, mode, progressContext, {
-					phase: "generating",
-					currentChunkIndex: chunkNumber,
-					totalChunks: chunks.length,
-					fileProgress: this.getChunkFileProgress(chunks.length, chunkNumber),
-					detail: `Completed chunk ${chunkNumber}/${chunks.length}.`,
-				});
+				units.push(...await extractor.extract(chunk, index));
 			} catch (error) {
+				chunkErrors.push(`chunk ${chunkNumber}: ${this.getErrorMessage(error)}`);
 				debugRun.recordChunkError(index, error, {
 					filePath: chunk.filePath,
 					titleHint: chunk.titleHint ?? "",
 				});
-				chunkErrors.push(`chunk ${index + 1}: ${this.getErrorMessage(error)}`);
-				this.updateGenerationProgress(file, mode, progressContext, {
-					phase: "generating",
-					currentChunkIndex: chunkNumber,
-					totalChunks: chunks.length,
-					fileProgress: this.getChunkFileProgress(chunks.length, chunkNumber),
-					detail: `Chunk ${chunkNumber}/${chunks.length} failed and was skipped.`,
-				});
 			}
 		}
 
-		if (chunkErrors.length > 0 && results.length === 0) {
+		if (chunkErrors.length > 0 && units.length === 0) {
 			throw new Error(chunkErrors.join(" "));
 		}
 
 		if (chunkErrors.length > 0) {
-			debugRun.log("chunk-summary", "Some chunks failed and were skipped.", {
-				errorCount: chunkErrors.length,
-				successCount: results.length,
+			new Notice(`Some chunks failed during knowledge extraction and were skipped. ${chunkErrors.length} chunk error(s).`, 8000);
+		}
+
+		return units;
+	}
+
+	private async composeCardGroups(
+		file: TFile,
+		chunks: ContentChunk[],
+		knowledgeUnits: KnowledgeUnit[],
+		topics: KnowledgeTopic[],
+		budgetPlan: BudgetPlan,
+		customPrompt: string,
+		debugRun: DebugRun,
+		mode: GenerationMode,
+		progressContext: GenerationProgressContext,
+	): Promise<ApprovedCardGroup[]> {
+		const unitsById = new Map(knowledgeUnits.map((unit) => [unit.id, unit] as const));
+		const topicsById = new Map(topics.map((topic) => [topic.topicId, topic] as const));
+		const chunksBySectionKey = new Map(chunks.map((chunk) => [chunk.sectionKey, chunk] as const));
+		const composer = new CardComposer(this.plugin.settings, customPrompt, debugRun);
+		const groupedCards = new Map<string, ApprovedCardGroup>();
+		const seenCards = new Set<string>();
+
+		for (const [index, allocation] of budgetPlan.selectedTopics.entries()) {
+			const topic = topicsById.get(allocation.topicId);
+			if (!topic) {
+				continue;
+			}
+
+			const topicUnits = topic.memberUnitIds
+				.map((unitId) => unitsById.get(unitId))
+				.filter((unit): unit is KnowledgeUnit => unit !== undefined);
+			if (topicUnits.length === 0) {
+				continue;
+			}
+
+			this.updateGenerationProgress(file, mode, progressContext, {
+				phase: "composing",
+				currentChunkIndex: index + 1,
+				totalChunks: budgetPlan.selectedTopics.length,
+				fileProgress: this.getPhaseFileProgress(0.7, 0.9, budgetPlan.selectedTopics.length, index),
+				detail: `Composing cards for topic ${index + 1}/${budgetPlan.selectedTopics.length}: ${topic.canonicalStatement}`,
 			});
-			new Notice(`Some chunks failed to generate and were skipped. ${chunkErrors.length} chunk error(s).`, 8000);
+
+			try {
+				const composition = await composer.compose({
+					topic,
+					units: topicUnits,
+					cardCount: allocation.cardCount,
+					strategy: "direct-global",
+				} satisfies CompositionRequest, index);
+				this.appendComposedCards(composition, topicUnits, chunksBySectionKey, groupedCards, seenCards);
+			} catch (error) {
+				debugRun.log("compose:error", "Skipping a topic that failed during composition.", {
+					topicId: topic.topicId,
+					error: this.getErrorMessage(error),
+				});
+			}
 		}
 
-		return results;
+		return Array.from(groupedCards.values())
+			.filter((group) => group.cards.length > 0)
+			.sort((left, right) => left.chunk.insertOffset - right.chunk.insertOffset);
 	}
 
-	private buildGroupsToWrite(chunkResults: ChunkGenerationResult[], reviewResult: ReviewResult, mode: GenerationMode): ApprovedCardGroup[] {
-		if (mode === "selection") {
-			return reviewResult.approvedGroups.filter((group) => group.cards.length > 0);
+	private appendComposedCards(
+		composition: TopicCompositionResult,
+		topicUnits: KnowledgeUnit[],
+		chunksBySectionKey: Map<string, ContentChunk>,
+		groupedCards: Map<string, ApprovedCardGroup>,
+		seenCards: Set<string>,
+	): void {
+		if (composition.cards.length === 0) {
+			return;
 		}
 
-		const approvedGroupsBySection = new Map(
-			reviewResult.approvedGroups.map((group) => [group.chunk.sectionKey, group.cards] as const),
-		);
+		const anchorChunk = this.resolveAnchorChunk(topicUnits, chunksBySectionKey);
+		if (!anchorChunk) {
+			return;
+		}
 
-		return chunkResults.map((result) => ({
-			chunk: result.chunk,
-			cards: [...(approvedGroupsBySection.get(result.chunk.sectionKey) ?? [])],
-		}));
+		const group = groupedCards.get(anchorChunk.sectionKey) ?? {
+			chunk: anchorChunk,
+			cards: [],
+		};
+
+		for (const card of composition.cards) {
+			const normalizedCard = this.applyGenerationDefaultsToCard(card);
+			const dedupeKey = `${normalizedCard.front.toLowerCase()}::${normalizedCard.back.toLowerCase()}`;
+			if (seenCards.has(dedupeKey)) {
+				continue;
+			}
+
+			seenCards.add(dedupeKey);
+			group.cards.push(normalizedCard);
+		}
+
+		groupedCards.set(anchorChunk.sectionKey, group);
 	}
 
-	private applyGenerationDefaultsToReviewGroups(reviewGroups: ReviewGroup[]): ReviewGroup[] {
-		if (!this.plugin.settings.generation.addObcdTag) {
-			return reviewGroups;
+	private resolveAnchorChunk(topicUnits: KnowledgeUnit[], chunksBySectionKey: Map<string, ContentChunk>): ContentChunk | null {
+		for (const unit of topicUnits) {
+			const chunk = chunksBySectionKey.get(unit.sectionKey);
+			if (chunk) {
+				return chunk;
+			}
 		}
 
-		return reviewGroups.map((group) => ({
-			...group,
-			candidates: group.candidates.map((candidate) => ({
-				...candidate,
-				card: this.applyGenerationDefaultsToCard(candidate.card),
-			})),
+		return null;
+	}
+
+	private resolveRegenerationOptions(mode: GenerationMode, chunks: ContentChunk[]): CardRegenerationOptions {
+		if (mode === "file" || mode === "folder-file") {
+			return this.plugin.settings.generation.defaultRegenerationPolicy === "full-document-rebuild"
+				? { mode: "all-plugin-generated" }
+				: { mode: "scoped-plugin-generated", ranges: this.buildScopedRanges(chunks) };
+		}
+
+		return {
+			mode: "scoped-plugin-generated",
+			ranges: this.buildScopedRanges(chunks),
+		};
+	}
+
+	private buildScopedRanges(chunks: ContentChunk[]): TextRange[] {
+		return chunks.map((chunk) => ({
+			from: chunk.range.from,
+			to: chunk.range.to,
 		}));
 	}
 
 	private applyGenerationDefaultsToCard(card: GeneratedBasicCard): GeneratedBasicCard {
+		if (!this.plugin.settings.generation.addObcdTag) {
+			return {
+				front: card.front,
+				back: card.back,
+				tags: [...card.tags],
+			};
+		}
+
 		return {
-			...card,
+			front: card.front,
+			back: card.back,
 			tags: this.appendConfiguredTag(card.tags),
 		};
 	}
@@ -556,20 +715,49 @@ export class FlashcardWorkflow {
 		return ((progressContext.currentFileIndex - 1) + normalizedFileProgress) / totalFiles;
 	}
 
-	private getChunkFileProgress(totalChunks: number, completedChunks: number): number {
-		if (totalChunks <= 0) {
-			return 0.1;
+	private getPhaseFileProgress(start: number, end: number, totalItems: number, completedItems: number): number {
+		if (totalItems <= 0) {
+			return end;
 		}
 
-		return 0.1 + ((completedChunks / totalChunks) * 0.62);
+		return start + (((completedItems + 1) / totalItems) * (end - start));
 	}
 
 	private describeChunkProgress(chunk: ContentChunk, chunkNumber: number, totalChunks: number): string {
 		const title = chunk.titleHint?.trim() ?? "";
 		if (title.length > 0) {
-			return `Generating chunk ${chunkNumber}/${totalChunks}: ${title}`;
+			return `Extracting knowledge from chunk ${chunkNumber}/${totalChunks}: ${title}`;
 		}
 
-		return `Generating chunk ${chunkNumber}/${totalChunks}.`;
+		return `Extracting knowledge from chunk ${chunkNumber}/${totalChunks}.`;
+	}
+
+	private describePlanningResult(plan: PlanningResult): string {
+		const recommendedSections = plan.sections
+			.filter((section) => section.recommended)
+			.slice(0, 3)
+			.map((section) => section.title);
+
+		if (recommendedSections.length === 0) {
+			return plan.reason;
+		}
+
+		return `${plan.reason} Recommended sections: ${recommendedSections.join(", ")}.`;
+	}
+
+	private notifyPlanningResult(file: TFile, plan: PlanningResult): void {
+		const recommendedSections = plan.sections
+			.filter((section) => section.recommended)
+			.slice(0, 3)
+			.map((section) => section.title)
+			.join(", ");
+
+		const recommendationSuffix = recommendedSections.length > 0
+			? ` Recommended sections: ${recommendedSections}.`
+			: "";
+		new Notice(
+			`${file.basename} was downgraded to chapter planning because it is outside the direct-global scope.${recommendationSuffix}`,
+			12000,
+		);
 	}
 }

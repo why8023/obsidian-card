@@ -22,15 +22,31 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 9;
+const SETTINGS_SCHEMA_VERSION = 10;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
+
+export type OversizeStrategy = "chapter-planning" | "refuse-or-scope";
+export type RegenerationPolicy = "full-document-rebuild" | "scope-rebuild";
 
 export interface FlashcardGenerationSettings {
 	model: string;
-	maxCardsPerChunk: number;
 	temperature: number;
 	addObcdTag: boolean;
 	defaultTag: string;
+	coreCardBudget: number;
+	secondaryCardBudget: number;
+	maxTotalCardsPerDocument: number;
+	maxCardsPerTopic: number;
+	maxKnowledgeUnitsPerChunk: number;
+	maxChunksForDirectGlobal: number;
+	maxTokensForDirectGlobal: number;
+	maxTaskInputTokens: number;
+	maxTaskChunks: number;
+	maxTaskLlmCalls: number;
+	maxHierarchyDepth: number;
+	oversizeStrategy: OversizeStrategy;
+	defaultRegenerationPolicy: RegenerationPolicy;
+	maxCardsPerChunk: number;
 }
 
 export interface ObcdDebugSettings {
@@ -75,10 +91,23 @@ export interface ObcdSettings {
 
 export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	model: getDefaultModelForPreset("openrouter"),
-	maxCardsPerChunk: 3,
 	temperature: 0.2,
 	addObcdTag: true,
 	defaultTag: DEFAULT_GENERATED_CARD_TAG,
+	coreCardBudget: 6,
+	secondaryCardBudget: 4,
+	maxTotalCardsPerDocument: 10,
+	maxCardsPerTopic: 2,
+	maxKnowledgeUnitsPerChunk: 4,
+	maxChunksForDirectGlobal: 18,
+	maxTokensForDirectGlobal: 12000,
+	maxTaskInputTokens: 22000,
+	maxTaskChunks: 36,
+	maxTaskLlmCalls: 48,
+	maxHierarchyDepth: 2,
+	oversizeStrategy: "chapter-planning",
+	defaultRegenerationPolicy: "full-document-rebuild",
+	maxCardsPerChunk: 3,
 };
 
 export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
@@ -270,22 +299,187 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("Max cards per chunk")
-			.setDesc("Upper bound for each selection or heading chunk.")
+			.setName("Core card budget")
+			.setDesc("Core topics consume this budget first. The model may still generate fewer cards when the note is sparse.")
 			.addText((text) => text
-				.setPlaceholder("3")
-				.setValue(String(this.plugin.settings.generation.maxCardsPerChunk))
+				.setPlaceholder("6")
+				.setValue(String(this.plugin.settings.generation.coreCardBudget))
 				.onChange(async (value) => {
 					const parsedValue = Number.parseInt(value, 10);
 					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.coreCardBudget = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Secondary card budget")
+			.setDesc("Optional follow-up cards for non-core topics. Set to 0 to generate only the main knowledge skeleton.")
+			.addText((text) => text
+				.setPlaceholder("4")
+				.setValue(String(this.plugin.settings.generation.secondaryCardBudget))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue >= 0) {
+						this.plugin.settings.generation.secondaryCardBudget = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Max total cards per document")
+			.setDesc("Hard ceiling across core and secondary topics for one file-level run.")
+			.addText((text) => text
+				.setPlaceholder("10")
+				.setValue(String(this.plugin.settings.generation.maxTotalCardsPerDocument))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxTotalCardsPerDocument = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Max cards per topic")
+			.setDesc("Prevents one merged topic from expanding into too many cards.")
+			.addText((text) => text
+				.setPlaceholder("2")
+				.setValue(String(this.plugin.settings.generation.maxCardsPerTopic))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxCardsPerTopic = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Max knowledge units per chunk")
+			.setDesc("Caps how many candidate knowledge points are extracted from one chunk before global ranking.")
+			.addText((text) => text
+				.setPlaceholder("4")
+				.setValue(String(this.plugin.settings.generation.maxKnowledgeUnitsPerChunk))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxKnowledgeUnitsPerChunk = parsedValue;
 						this.plugin.settings.generation.maxCardsPerChunk = parsedValue;
 						await this.plugin.saveSettings();
 					}
 				}));
 
 		new Setting(containerEl)
+			.setName("Direct-global chunk limit")
+			.setDesc("If a file exceeds this chunk count, the plugin stops doing direct global generation.")
+			.addText((text) => text
+				.setPlaceholder("18")
+				.setValue(String(this.plugin.settings.generation.maxChunksForDirectGlobal))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxChunksForDirectGlobal = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Direct-global token limit")
+			.setDesc("Estimated token ceiling for a note to stay in the full-document ranking flow.")
+			.addText((text) => text
+				.setPlaceholder("12000")
+				.setValue(String(this.plugin.settings.generation.maxTokensForDirectGlobal))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxTokensForDirectGlobal = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Task token limit")
+			.setDesc("Hard stop for one run. Oversized files downgrade or refuse before generation starts.")
+			.addText((text) => text
+				.setPlaceholder("22000")
+				.setValue(String(this.plugin.settings.generation.maxTaskInputTokens))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxTaskInputTokens = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Task chunk limit")
+			.setDesc("Hard stop for the total number of chunks in one run.")
+			.addText((text) => text
+				.setPlaceholder("36")
+				.setValue(String(this.plugin.settings.generation.maxTaskChunks))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxTaskChunks = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Task API call limit")
+			.setDesc("Hard stop for the total extraction, ranking, and composition calls in one run.")
+			.addText((text) => text
+				.setPlaceholder("48")
+				.setValue(String(this.plugin.settings.generation.maxTaskLlmCalls))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxTaskLlmCalls = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Max hierarchy depth")
+			.setDesc("Reserved for future hierarchical summarization. The current build keeps this for forward-compatible planning limits.")
+			.addText((text) => text
+				.setPlaceholder("2")
+				.setValue(String(this.plugin.settings.generation.maxHierarchyDepth))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+						this.plugin.settings.generation.maxHierarchyDepth = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("Oversize behavior")
+			.setDesc("Choose whether oversized notes should produce a chapter plan or stop and ask you to scope down.")
+			.addDropdown((dropdown) => dropdown
+				.addOption("chapter-planning", "Downgrade to chapter planning")
+				.addOption("refuse-or-scope", "Refuse and ask to scope down")
+				.setValue(this.plugin.settings.generation.oversizeStrategy)
+				.onChange(async (value) => {
+					this.plugin.settings.generation.oversizeStrategy = value as OversizeStrategy;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName("Regeneration policy")
+			.setDesc("Control whether file-level runs replace all plugin cards in the file or only rebuild cards inside the current scope.")
+			.addDropdown((dropdown) => dropdown
+				.addOption("full-document-rebuild", "Full document rebuild")
+				.addOption("scope-rebuild", "Scope-only rebuild")
+				.setValue(this.plugin.settings.generation.defaultRegenerationPolicy)
+				.onChange(async (value) => {
+					this.plugin.settings.generation.defaultRegenerationPolicy = value as RegenerationPolicy;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
 			.setName("Temperature")
-			.setDesc("Lower values keep answers tighter and more predictable.")
+			.setDesc("Lower values keep extraction, ranking, and composition tighter and more predictable.")
 			.addText((text) => text
 				.setPlaceholder("0.2")
 				.setValue(String(this.plugin.settings.generation.temperature))
@@ -299,7 +493,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Add default tag")
-			.setDesc("Append the configured default tag to every generated card before review and insertion.")
+			.setDesc("Append the configured default tag to every generated card before insertion.")
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.generation.addObcdTag)
 				.onChange(async (value) => {
@@ -320,15 +514,15 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Prompts")
-			.setDesc("Choose the global fallback prompt and folder-specific prompt templates.")
+			.setDesc("Choose shared prompt instructions that are appended to extraction, ranking, planning, and composition.")
 			.setHeading();
 
 		new Setting(containerEl)
 			.setName("Global prompt")
-			.setDesc("Used when no folder rule matches. Leave empty to fall back to the built-in default prompt.")
+			.setDesc("Shared guidance used when no folder rule matches. Leave empty to rely on the built-in workflow prompts.")
 			.addTextArea((textArea) => {
 				textArea
-					.setPlaceholder("Describe how flashcards should be generated by default.")
+					.setPlaceholder("Describe additional generation preferences for this vault.")
 					.setValue(this.plugin.settings.prompts.globalPrompt)
 					.onChange(async (value) => {
 						this.plugin.settings.prompts.globalPrompt = value;
@@ -539,13 +733,31 @@ function parseProviders(value: unknown, fallback: FlashcardProvider[]): Flashcar
 
 function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSettings): FlashcardGenerationSettings {
 	const generationSource = isRecord(value) ? value : {};
+	const legacyMaxCardsPerChunk = readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 });
 
 	return {
 		model: readString(generationSource.model, fallback.model),
-		maxCardsPerChunk: readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 }),
 		temperature: readNumber(generationSource.temperature, fallback.temperature, { min: 0, max: 2 }),
 		addObcdTag: readBoolean(generationSource.addObcdTag, fallback.addObcdTag),
 		defaultTag: normalizeConfiguredDefaultTag(generationSource.defaultTag, fallback.defaultTag),
+		coreCardBudget: readNumber(generationSource.coreCardBudget, fallback.coreCardBudget, { min: 1, max: 50 }),
+		secondaryCardBudget: readNumber(generationSource.secondaryCardBudget, fallback.secondaryCardBudget, { min: 0, max: 50 }),
+		maxTotalCardsPerDocument: readNumber(generationSource.maxTotalCardsPerDocument, fallback.maxTotalCardsPerDocument, { min: 1, max: 80 }),
+		maxCardsPerTopic: readNumber(generationSource.maxCardsPerTopic, fallback.maxCardsPerTopic, { min: 1, max: 5 }),
+		maxKnowledgeUnitsPerChunk: readNumber(
+			generationSource.maxKnowledgeUnitsPerChunk,
+			legacyMaxCardsPerChunk > 0 ? Math.max(fallback.maxKnowledgeUnitsPerChunk, legacyMaxCardsPerChunk) : fallback.maxKnowledgeUnitsPerChunk,
+			{ min: 1, max: 12 },
+		),
+		maxChunksForDirectGlobal: readNumber(generationSource.maxChunksForDirectGlobal, fallback.maxChunksForDirectGlobal, { min: 1, max: 80 }),
+		maxTokensForDirectGlobal: readNumber(generationSource.maxTokensForDirectGlobal, fallback.maxTokensForDirectGlobal, { min: 1000, max: 50000 }),
+		maxTaskInputTokens: readNumber(generationSource.maxTaskInputTokens, fallback.maxTaskInputTokens, { min: 2000, max: 100000 }),
+		maxTaskChunks: readNumber(generationSource.maxTaskChunks, fallback.maxTaskChunks, { min: 1, max: 120 }),
+		maxTaskLlmCalls: readNumber(generationSource.maxTaskLlmCalls, fallback.maxTaskLlmCalls, { min: 3, max: 200 }),
+		maxHierarchyDepth: readNumber(generationSource.maxHierarchyDepth, fallback.maxHierarchyDepth, { min: 1, max: 4 }),
+		oversizeStrategy: readOversizeStrategy(generationSource.oversizeStrategy, fallback.oversizeStrategy),
+		defaultRegenerationPolicy: readRegenerationPolicy(generationSource.defaultRegenerationPolicy, fallback.defaultRegenerationPolicy),
+		maxCardsPerChunk: legacyMaxCardsPerChunk,
 	};
 }
 
@@ -616,6 +828,14 @@ function readPresetType(value: unknown, fallback: FlashcardProviderPresetType): 
 	}
 
 	return fallback;
+}
+
+function readOversizeStrategy(value: unknown, fallback: OversizeStrategy): OversizeStrategy {
+	return value === "chapter-planning" || value === "refuse-or-scope" ? value : fallback;
+}
+
+function readRegenerationPolicy(value: unknown, fallback: RegenerationPolicy): RegenerationPolicy {
+	return value === "full-document-rebuild" || value === "scope-rebuild" ? value : fallback;
 }
 
 function readString(value: unknown, fallback: string): string {

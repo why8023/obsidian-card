@@ -90,13 +90,7 @@ interface DebugArtifact {
 		requestUrl: string;
 		hasApiKey: boolean;
 	};
-	generation: {
-		model: string;
-		maxCardsPerChunk: number;
-		temperature: number;
-		addObcdTag: boolean;
-		defaultTag: string;
-	};
+	generation: Record<string, unknown>;
 	events: DebugEvent[];
 	chunks: DebugChunkRecord[];
 	candidates?: CardCandidate[];
@@ -164,13 +158,7 @@ class ActiveDebugRun implements DebugRun {
 				requestUrl: getProviderChatCompletionsUrl(activeProvider),
 				hasApiKey: activeProvider.apiKey.trim().length > 0,
 			},
-			generation: {
-				model: plugin.settings.generation.model,
-				maxCardsPerChunk: plugin.settings.generation.maxCardsPerChunk,
-				temperature: plugin.settings.generation.temperature,
-				addObcdTag: plugin.settings.generation.addObcdTag,
-				defaultTag: plugin.settings.generation.defaultTag,
-			},
+			generation: toSerializableValue(plugin.settings.generation) as Record<string, unknown>,
 			events: [],
 			chunks: [],
 		};

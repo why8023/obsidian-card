@@ -1,28 +1,82 @@
-export const DEFAULT_FLASHCARD_PROMPT = [
-	"You generate high-quality BASIC flashcards from markdown note sections.",
-	"Use the JSON payload from the user message and treat the text field as the source content.",
-	"Extract only knowledge worth long-term review, not temporary phrasing, filler, or document-specific trivia.",
-	"Choose the card count based on content density.",
-	"Returning [] is correct when the section is not worth turning into flashcards.",
-	"Each card must cover exactly one core idea.",
-	"front must be a clear, standalone question that does not depend on surrounding context.",
-	"back must be a concise, accurate answer that is complete enough for memorization.",
-	"Prefer definitions, causes, comparisons, steps, conditions, formulas, and common misconceptions.",
-	"Split broad ideas into multiple cards instead of combining several facts into one card.",
-	"Avoid vague, open-ended, duplicated, or near-duplicated cards.",
-	"Use the same language as the source text.",
-	"Do not copy long passages verbatim; rewrite them into natural review questions and answers.",
-].join(" ");
+import type { GenerationStrategy } from "../types";
 
-export function buildFlashcardOutputConstraintPrompt(maxCardsPerChunk: number): string {
+function withCustomInstruction(baseLines: string[], customInstruction: string): string {
+	const trimmedInstruction = customInstruction.trim();
+	if (trimmedInstruction.length === 0) {
+		return baseLines.join(" ");
+	}
+
 	return [
-		`Return only a JSON array with at most ${maxCardsPerChunk} items.`,
-		"Each item must be an object with exactly these keys: front, back, tags.",
-		"front must be a non-empty plain-text string.",
-		"back must be a non-empty plain-text string.",
-		"tags must be an array of short strings and may be empty.",
-		"If the text does not support useful flashcards, return [].",
-		"Do not include deck, id, uid, source, heading, card-start, card-back, card-end, markdown fences, commentary, or extra keys.",
-		"Do not output Markdown card blocks or HTML comments.",
+		...baseLines,
+		`Additional generation policy: ${trimmedInstruction}`,
 	].join(" ");
+}
+
+export function buildKnowledgeExtractionPrompt(maxKnowledgeUnitsPerChunk: number, customInstruction: string): string {
+	return withCustomInstruction([
+		"You extract durable learning-worthy knowledge units from a markdown note chunk.",
+		"Do not generate flashcards in this step.",
+		"Prefer core concepts, key conclusions, definitions, contrasts, causal relations, and decision-relevant steps.",
+		"Down-rank examples, incidental details, rhetorical filler, document scaffolding, and temporary process traces.",
+		"Returning an empty array is correct when the chunk has no worthwhile long-term memory targets.",
+		`Return at most ${maxKnowledgeUnitsPerChunk} knowledge units for the chunk.`,
+		"Each unit must contain: statement, kind, importanceLocal, candidateQuestionIntent, evidenceExcerpt.",
+		"kind must be one of: core-concept, key-conclusion, supporting-detail, background, example, process-detail, ignore.",
+		"importanceLocal must be a number from 0 to 1.",
+		"candidateQuestionIntent should briefly describe what a later card would test, not the final question wording.",
+		"evidenceExcerpt should quote only the smallest useful supporting excerpt.",
+		"Return only JSON in the shape {\"units\": [...]} with no markdown fences or commentary.",
+	], customInstruction);
+}
+
+export function buildGlobalRankingPrompt(
+	options: {
+		coreCardBudget: number;
+		secondaryCardBudget: number;
+		maxTotalCardsPerDocument: number;
+		maxCardsPerTopic: number;
+	},
+	customInstruction: string,
+): string {
+	return withCustomInstruction([
+		"You consolidate document-level knowledge units into globally ranked learning topics.",
+		"Deduplicate overlapping units, merge paraphrases, and prefer one canonical statement per topic.",
+		"Select the document's core learning skeleton first, then only keep secondary topics that still justify card budget.",
+		"Do not keep topics just to maximize coverage.",
+		`The document budgets are: core=${options.coreCardBudget}, secondary=${options.secondaryCardBudget}, total=${options.maxTotalCardsPerDocument}, maxCardsPerTopic=${options.maxCardsPerTopic}.`,
+		"tier must be either core or secondary.",
+		"importanceGlobal must be a number from 0 to 1.",
+		"recommendedCardCount must be a small integer, usually 1 and never larger than the configured maxCardsPerTopic.",
+		"Only reference memberUnitIds that exist in the input.",
+		"Return only JSON in the shape {\"topics\": [...]} with fields: canonicalStatement, memberUnitIds, importanceGlobal, tier, recommendedCardCount.",
+	], customInstruction);
+}
+
+export function buildCardCompositionPrompt(
+	options: {
+		cardCount: number;
+		strategy: GenerationStrategy;
+	},
+	customInstruction: string,
+): string {
+	return withCustomInstruction([
+		"You compose final BASIC flashcards from globally selected knowledge topics plus source evidence.",
+		"Use the canonical topic statement and the supporting evidence to write clear, standalone Q/A cards.",
+		"Questions must stand on their own without relying on section titles or surrounding prose.",
+		"Answers must be concise but complete enough for review.",
+		"Do not produce duplicate cards or split topics into trivia.",
+		"Stay faithful to the source evidence and use the same language as the source material unless the user explicitly requested another language.",
+		`Return at most ${options.cardCount} cards for the topic. The current strategy is ${options.strategy}.`,
+		"Return only a JSON array of {front, back, tags}. tags may be empty.",
+		"Do not emit markdown card blocks, explanations, or extra keys.",
+	], customInstruction);
+}
+
+export function buildPlanningPrompt(customInstruction: string): string {
+	return withCustomInstruction([
+		"You are planning flashcard generation for an oversized markdown document.",
+		"Do not generate cards.",
+		"Summarize the major sections, estimate where flashcard value density is highest, and recommend the next sections to scope down into.",
+		"Return only JSON in the shape {\"sections\": [...]} with fields: title, summary, estimatedCardValueDensity, recommended.",
+	], customInstruction);
 }
