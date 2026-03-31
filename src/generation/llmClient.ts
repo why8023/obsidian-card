@@ -65,6 +65,59 @@ export class LlmClient {
 
 		return parseJsonResponse(responseJson as ChatCompletionResponse | Record<string, unknown> | unknown[]);
 	}
+
+	async testConnection(): Promise<{
+		status: number;
+		model: string;
+		url: string;
+	}> {
+		const activeProvider = getActiveProvider(this.settings);
+		const requestUrlValue = getProviderChatCompletionsUrl(activeProvider);
+		const headers = getProviderHeaders(activeProvider);
+		const requestBody = {
+			model: this.settings.generation.model,
+			temperature: 0,
+			max_tokens: 1,
+			messages: [
+				{
+					role: "user" as const,
+					content: "Reply with OK.",
+				},
+			],
+		};
+
+		this.debugRun?.log("connection-test:request", "Sending connection test request.", {
+			url: requestUrlValue,
+			headers,
+			body: requestBody,
+		});
+
+		const response = await requestUrl({
+			url: requestUrlValue,
+			method: "POST",
+			contentType: "application/json",
+			headers,
+			body: JSON.stringify(requestBody),
+			throw: false,
+		});
+
+		this.debugRun?.log("connection-test:response", "Received connection test response.", {
+			status: response.status,
+			headers: response.headers,
+			text: response.text,
+			json: response.json as unknown,
+		});
+
+		if (response.status >= 400) {
+			throw new Error(`连接测试失败，状态码 ${response.status}: ${response.text.trim()}`);
+		}
+
+		return {
+			status: response.status,
+			model: this.settings.generation.model,
+			url: requestUrlValue,
+		};
+	}
 }
 
 function parseJsonResponse(response: ChatCompletionResponse | Record<string, unknown> | unknown[]): unknown {

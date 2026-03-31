@@ -1,6 +1,7 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 
 import { getDebugArtifactsDirectory } from "./debug/debugService";
+import { LlmClient } from "./generation/llmClient";
 import type ObcdPlugin from "./main";
 import {
 	DEFAULT_OBAR_FRONTMATTER_KEYS,
@@ -187,6 +188,7 @@ export function parseSettings(data: unknown): ObcdSettings {
 
 export class ObcdSettingTab extends PluginSettingTab {
 	plugin: ObcdPlugin;
+	private isTestingConnection = false;
 
 	constructor(app: App, plugin: ObcdPlugin) {
 		super(app, plugin);
@@ -297,6 +299,31 @@ export class ObcdSettingTab extends PluginSettingTab {
 					this.plugin.settings.generation.model = value.trim();
 					await this.plugin.saveSettings();
 				}));
+
+		new Setting(containerEl)
+			.setName("连接测试")
+			.setDesc("使用当前基础 URL、API Key 和模型名称发起一次最小请求，检查接口是否可连通。")
+			.addButton((button) => {
+				button
+					.setButtonText(this.isTestingConnection ? "测试中..." : "测试连接")
+					.setDisabled(this.isTestingConnection)
+					.onClick(async () => {
+						if (this.isTestingConnection) {
+							return;
+						}
+
+						this.isTestingConnection = true;
+						button.setButtonText("测试中...");
+						button.setDisabled(true);
+
+						try {
+							await this.testProviderConnection();
+						} finally {
+							this.isTestingConnection = false;
+							this.display();
+						}
+					});
+			});
 
 		new Setting(containerEl)
 			.setName("核心卡片预算")
@@ -717,6 +744,32 @@ export class ObcdSettingTab extends PluginSettingTab {
 		));
 		await this.plugin.saveSettings();
 	}
+
+	private async testProviderConnection(): Promise<void> {
+		const activeProvider = getActiveProvider(this.plugin.settings);
+		const presetInfo = PROVIDER_PRESET_INFO[activeProvider.presetType];
+		const normalizedModel = this.plugin.settings.generation.model.trim();
+
+		if (presetInfo.requireApiKey && activeProvider.apiKey.trim().length === 0) {
+			new Notice("请先填写 API Key，再测试连接。", 8000);
+			return;
+		}
+
+		if (normalizedModel.length === 0) {
+			new Notice("请先填写模型名称，再测试连接。", 8000);
+			return;
+		}
+
+		this.plugin.settings.generation.model = normalizedModel;
+		await this.plugin.saveSettings();
+
+		try {
+			const result = await new LlmClient(this.plugin.settings).testConnection();
+			new Notice(`连接成功：${presetInfo.label} / ${result.model}（状态码 ${result.status}）`, 8000);
+		} catch (error) {
+			new Notice(getErrorMessage(error), 12000);
+		}
+	}
 }
 
 function parseProviders(value: unknown, fallback: FlashcardProvider[]): FlashcardProvider[] {
@@ -921,4 +974,12 @@ function createEmptyFolderPromptRule(): ObcdFolderPromptRule {
 		noteFolder: "",
 		templatePath: "",
 	};
+}
+
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return String(error);
 }
