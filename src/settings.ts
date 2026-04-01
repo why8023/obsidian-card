@@ -414,7 +414,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("完整块规则")
-			.setDesc("命中起始和结束正则之间的内容会整体视作一个知识块，不再与相邻文本合并；即使长度超过目标长度，也会整体请求。")
+			.setDesc("命中起始和结束正则之间的内容会先保持为不可拆的完整单元，再和相邻正文一起按目标长度组合；即使单个完整块超过目标长度，也会整体请求。")
 			.addButton((button) => button
 				.setButtonText("添加规则")
 				.onClick(async () => {

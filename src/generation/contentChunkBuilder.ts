@@ -27,7 +27,6 @@ interface BuildFileChunksOptions {
 interface CandidateBlock {
 	range: TextRange;
 	text: string;
-	isProtected: boolean;
 }
 
 const DEFAULT_TARGET_CHUNK_CHARACTERS = 900;
@@ -106,7 +105,6 @@ function collectAtomicBlocks(
 				to: trimmed.to,
 			},
 			text: trimmed.text,
-			isProtected: false,
 		});
 
 		activeBlockStart = null;
@@ -196,7 +194,6 @@ function createProtectedBlock(content: string, range: TextRange, excludedRanges:
 			to: range.to,
 		},
 		text,
-		isProtected: true,
 	};
 }
 
@@ -208,13 +205,9 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 	const merged: CandidateBlock[] = [];
 	let current = cloneBlock(blocks[0]!);
 
+	// All candidate blocks are already atomic at this stage, including protected ranges.
+	// Merging only decides how many atomic blocks travel together in one request.
 	for (const nextBlock of blocks.slice(1)) {
-		if (current.isProtected || nextBlock.isProtected) {
-			merged.push(current);
-			current = cloneBlock(nextBlock);
-			continue;
-		}
-
 		const mergedLength = current.text.length + 2 + nextBlock.text.length;
 		if (mergedLength > targetChunkCharacters) {
 			merged.push(current);
@@ -228,7 +221,6 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 				to: nextBlock.range.to,
 			},
 			text: `${current.text}\n\n${nextBlock.text}`,
-			isProtected: false,
 		};
 	}
 
@@ -281,7 +273,6 @@ function cloneBlock(block: CandidateBlock): CandidateBlock {
 			to: block.range.to,
 		},
 		text: block.text,
-		isProtected: block.isProtected,
 	};
 }
 
