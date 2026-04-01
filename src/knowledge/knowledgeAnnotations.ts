@@ -88,10 +88,10 @@ export function renderKnowledgeAnnotationEnd(): string {
 
 export function stripKnowledgeAnnotationMarkers(value: string): string {
 	return value
-		.replace(/^\s*<!--\s*obar-note-start:[A-Za-z0-9-]+\s*-->\s*$/gm, "")
-		.replace(/^\s*<!--\s*obar-note-end:[A-Za-z0-9-]+\s*-->\s*$/gm, "")
-		.replace(/^\s*<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*$/gm, "")
-		.replace(/^\s*<!--\s*obcd-knowledge-end\s*-->\s*$/gm, "")
+		.replace(/<!--\s*obar-note-start:[A-Za-z0-9-]+\s*-->\s*/g, "")
+		.replace(/\s*<!--\s*obar-note-end:[A-Za-z0-9-]+\s*-->/g, "")
+		.replace(/<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*/g, "")
+		.replace(/\s*<!--\s*obcd-knowledge-end\s*-->/g, "")
 		.trim();
 }
 

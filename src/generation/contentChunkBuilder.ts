@@ -1,6 +1,7 @@
 import type { TFile } from "obsidian";
 
 import { collectKnowledgeAnnotations, stripKnowledgeAnnotationMarkers } from "../knowledge/knowledgeAnnotations";
+import { collectObarRecordRanges } from "../obarCompatibility";
 import type { ContentChunk, ExistingKnowledgeAnnotation, TextRange } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import {
@@ -9,6 +10,7 @@ import {
 	hashContent,
 	makePreview,
 	normalizeContentForHash,
+	sliceWithoutRanges,
 	trimContentRange,
 } from "../utils/markdown";
 
@@ -24,8 +26,8 @@ interface CandidateBlock {
 
 const DEFAULT_TARGET_CHUNK_CHARACTERS = 900;
 const MIN_TARGET_CHUNK_CHARACTERS = 200;
-const KNOWLEDGE_START_LINE = /^<!--\s*obcd-knowledge-start:/i;
-const KNOWLEDGE_END_LINE = /^<!--\s*obcd-knowledge-end\s*-->$/i;
+const KNOWLEDGE_START_MARKER = /<!--\s*obcd-knowledge-start:/i;
+const KNOWLEDGE_END_MARKER = /<!--\s*obcd-knowledge-end\s*-->/i;
 
 export function buildSelectionChunks(file: TFile, selectedText: string, range: TextRange): ContentChunk[] {
 	const trimmedText = selectedText.trim();
@@ -55,7 +57,8 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 	const contentStart = findFrontmatterEnd(content);
 	const existingAnnotations = collectKnowledgeAnnotations(content);
 	const cardRanges = collectExistingCardEntries(file, content).map((entry) => entry.blockRange);
-	const atomicBlocks = collectAtomicBlocks(content, cardRanges, contentStart);
+	const obarRecordRanges = collectObarRecordRanges(content);
+	const atomicBlocks = collectAtomicBlocks(content, cardRanges, obarRecordRanges, contentStart);
 	const mergedBlocks = mergeBlocksByTargetSize(atomicBlocks, targetChunkCharacters);
 	const chunks = materializeChunks(file, content, mergedBlocks, existingAnnotations);
 	return filterChunksByOffset(chunks, options.upToOffset);
@@ -64,6 +67,7 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 function collectAtomicBlocks(
 	content: string,
 	cardRanges: TextRange[],
+	obarRecordRanges: TextRange[],
 	contentStart: number,
 ): CandidateBlock[] {
 	const lines = collectLineInfos(content);
@@ -105,6 +109,18 @@ function collectAtomicBlocks(
 			break;
 		}
 
+		const coveringObarRecordRange = findCoveringRange(obarRecordRanges, line.start);
+		if (coveringObarRecordRange) {
+			flushActiveBlock();
+			const protectedBlock = createProtectedBlock(content, coveringObarRecordRange, cardRanges);
+			if (protectedBlock) {
+				blocks.push(protectedBlock);
+			}
+			lineIndex = advancePastOffset(lines, coveringObarRecordRange.to, lineIndex);
+			fenceMarker = null;
+			continue;
+		}
+
 		const coveringCardRange = findCoveringRange(cardRanges, line.start);
 		if (coveringCardRange) {
 			flushActiveBlock();
@@ -113,7 +129,7 @@ function collectAtomicBlocks(
 			continue;
 		}
 
-		if (KNOWLEDGE_START_LINE.test(line.text.trim()) || KNOWLEDGE_END_LINE.test(line.text.trim())) {
+		if (KNOWLEDGE_START_MARKER.test(line.text) || KNOWLEDGE_END_MARKER.test(line.text)) {
 			flushActiveBlock();
 			lineIndex += 1;
 			continue;
@@ -154,6 +170,23 @@ function collectAtomicBlocks(
 
 	flushActiveBlock();
 	return blocks;
+}
+
+function createProtectedBlock(content: string, range: TextRange, excludedRanges: TextRange[]): CandidateBlock | null {
+	const text = stripKnowledgeAnnotationMarkers(
+		sliceWithoutRanges(content, range.from, range.to, excludedRanges),
+	).trim();
+	if (text.length === 0 || !containsMeaningfulText(text)) {
+		return null;
+	}
+
+	return {
+		range: {
+			from: range.from,
+			to: range.to,
+		},
+		text,
+	};
 }
 
 function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters: number): CandidateBlock[] {

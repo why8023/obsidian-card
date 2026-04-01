@@ -12,6 +12,8 @@ import { KNOWLEDGE_ANNOTATION_VERSION, GENERATED_CARD_TYPE } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { detectNewline } from "../utils/markdown";
 
+const CARD_START_MARKER = "<!-- card-start";
+
 export interface CardRegenerationOptions {
 	mode: "none" | "all-plugin-generated" | "scoped-plugin-generated";
 	ranges?: TextRange[];
@@ -84,15 +86,15 @@ export async function writeApprovedCardGroups(
 				chunk.range.from,
 				...existingAnnotations.map((annotation) => annotation.blockRange.from),
 			);
-			const replaceEnd = resolveChunkReplaceEnd(
+			const replacementBoundary = resolveChunkReplacementBoundary(
 				chunk,
 				removableEntriesByChunkId.get(chunk.chunkId) ?? [],
 				content,
 				getNextChunkStart(sortedChunks, index),
 			);
-			const bodyText = stripKnowledgeAnnotationMarkers(workingContent.slice(chunk.range.from, chunk.range.to));
-			const replacement = renderChunkArtifacts(bodyText, analysis, cards, newline, shouldUseObarWrapper);
-			workingContent = `${workingContent.slice(0, replaceStart)}${replacement}${workingContent.slice(replaceEnd)}`;
+			const bodyText = resolveChunkBodyText(chunk, workingContent);
+			const replacement = `${renderChunkArtifacts(bodyText, analysis, cards, newline, shouldUseObarWrapper)}${replacementBoundary.trailingSeparator}`;
+			workingContent = `${workingContent.slice(0, replaceStart)}${replacement}${workingContent.slice(replacementBoundary.replaceEnd)}`;
 		}
 
 		return workingContent;
@@ -226,18 +228,22 @@ function collectSequentialEntriesForChunk(
 	return associatedEntries;
 }
 
-function resolveChunkReplaceEnd(
+function resolveChunkReplacementBoundary(
 	chunk: ContentChunk,
 	entries: ReturnType<typeof collectExistingCardEntries>,
 	content: string,
 	nextChunkStart: number,
-): number {
+): { replaceEnd: number; trailingSeparator: string } {
 	const baseEnd = Math.max(
 		chunk.range.to,
 		...(chunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.to),
 	);
 	if (entries.length === 0) {
-		return baseEnd;
+		const extendedEnd = extendWhitespaceOnly(content, baseEnd, nextChunkStart);
+		return {
+			replaceEnd: extendedEnd,
+			trailingSeparator: content.slice(baseEnd, extendedEnd),
+		};
 	}
 
 	let replaceEnd = baseEnd;
@@ -250,7 +256,16 @@ function resolveChunkReplaceEnd(
 		replaceEnd = entry.blockRange.to;
 	}
 
-	return extendWhitespaceOnly(content, replaceEnd, nextChunkStart);
+	const extendedEnd = extendWhitespaceOnly(content, replaceEnd, nextChunkStart);
+	return {
+		replaceEnd: extendedEnd,
+		trailingSeparator: content.slice(replaceEnd, extendedEnd),
+	};
+}
+
+function resolveChunkBodyText(chunk: ContentChunk, content: string): string {
+	const strippedBodyText = stripKnowledgeAnnotationMarkers(content.slice(chunk.range.from, chunk.range.to));
+	return strippedBodyText.includes(CARD_START_MARKER) ? chunk.text : strippedBodyText;
 }
 
 function extendWhitespaceOnly(content: string, from: number, limit: number): number {
