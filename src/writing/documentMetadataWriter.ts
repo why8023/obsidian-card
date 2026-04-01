@@ -2,7 +2,7 @@ import type { App, TFile } from "obsidian";
 
 import type { ResolvedGenerationPrompt } from "../prompts/promptResolver";
 import type { BudgetPlan, GenerationMode, KnowledgeTopic } from "../types";
-import { findFrontmatterEnd } from "../utils/markdown";
+import { collectLineInfos, detectNewline, findFrontmatterEnd } from "../utils/markdown";
 
 const DOCUMENT_METADATA_SCHEMA_VERSION = 2;
 
@@ -158,11 +158,11 @@ export async function writeDocumentMetadata(
 		cardGenerationFingerprints: normalizeCardGenerationFingerprints(request.cardGenerationFingerprints),
 	});
 
-	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
-		frontmatter[OBCD_TOPICS_FRONTMATTER_KEY] = topicsPayload;
-		frontmatter[OBCD_TOPIC_PLAN_FRONTMATTER_KEY] = topicPlanPayload;
-		frontmatter[OBCD_GENERATION_META_FRONTMATTER_KEY] = generationMetaPayload;
-	});
+	await app.vault.process(file, (content) => upsertDocumentMetadataFrontmatter(content, {
+		[OBCD_TOPICS_FRONTMATTER_KEY]: topicsPayload,
+		[OBCD_TOPIC_PLAN_FRONTMATTER_KEY]: topicPlanPayload,
+		[OBCD_GENERATION_META_FRONTMATTER_KEY]: generationMetaPayload,
+	}));
 	return true;
 }
 
@@ -467,6 +467,100 @@ function extractPersistedMetadataFrontmatter(content: string | undefined): Recor
 	}
 
 	return Object.keys(values).length > 0 ? values : null;
+}
+
+function upsertDocumentMetadataFrontmatter(content: string, values: Record<string, string>): string {
+	const newline = detectNewline(content);
+	const frontmatterEnd = findFrontmatterEnd(content);
+
+	if (frontmatterEnd === 0) {
+		const renderedLines = renderManagedFrontmatterLines(values, newline);
+		return `---${newline}${renderedLines}${newline}---${newline}${content}`;
+	}
+
+	const frontmatterBlock = content.slice(0, frontmatterEnd);
+	const updatedFrontmatter = upsertFrontmatterScalars(frontmatterBlock, values, newline);
+	return `${updatedFrontmatter}${content.slice(frontmatterEnd)}`;
+}
+
+function upsertFrontmatterScalars(
+	frontmatterBlock: string,
+	values: Record<string, string>,
+	newline: string,
+): string {
+	const lines = collectLineInfos(frontmatterBlock);
+	const openingLine = lines[0];
+	if (!openingLine) {
+		return frontmatterBlock;
+	}
+
+	let closingLineIndex = -1;
+	for (let index = lines.length - 1; index >= 0; index -= 1) {
+		const line = lines[index];
+		if (line && (line.text.trim() === "---" || line.text.trim() === "...")) {
+			closingLineIndex = index;
+			break;
+		}
+	}
+
+	if (closingLineIndex <= 0) {
+		return frontmatterBlock;
+	}
+
+	const closingLine = lines[closingLineIndex]!;
+	const managedKeys = new Set(Object.keys(values));
+	const innerBlock = frontmatterBlock.slice(openingLine.end, closingLine.start);
+	const preservedInnerBlock = stripManagedFrontmatterLines(innerBlock, managedKeys);
+	const normalizedInnerBlock = trimTrailingBlankLines(preservedInnerBlock, newline);
+	const managedBlock = renderManagedFrontmatterLines(values, newline);
+
+	const nextInnerBlock = normalizedInnerBlock.length > 0
+		? `${normalizedInnerBlock}${newline}${managedBlock}${newline}`
+		: `${managedBlock}${newline}`;
+
+	return `${frontmatterBlock.slice(0, openingLine.end)}${nextInnerBlock}${frontmatterBlock.slice(closingLine.start)}`;
+}
+
+function stripManagedFrontmatterLines(block: string, managedKeys: Set<string>): string {
+	if (block.length === 0 || managedKeys.size === 0) {
+		return block;
+	}
+
+	let result = "";
+	for (const line of collectLineInfos(block)) {
+		const rawLine = block.slice(line.start, line.end);
+		if (isManagedFrontmatterLine(line.text, managedKeys)) {
+			continue;
+		}
+
+		result += rawLine;
+	}
+
+	return result;
+}
+
+function isManagedFrontmatterLine(line: string, managedKeys: Set<string>): boolean {
+	for (const key of managedKeys) {
+		if (new RegExp(`^[\\t ]*${escapeRegExp(key)}\\s*:`).test(line)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function trimTrailingBlankLines(value: string, newline: string): string {
+	return value.replace(new RegExp(`(?:${escapeRegExp(newline)}[\\t ]*)+$`), "");
+}
+
+function renderManagedFrontmatterLines(values: Record<string, string>, newline: string): string {
+	return Object.entries(values)
+		.map(([key, value]) => `${key}: ${quoteYamlScalar(value)}`)
+		.join(newline);
+}
+
+function quoteYamlScalar(value: string): string {
+	return `'${value.replace(/'/g, "''")}'`;
 }
 
 function extractFrontmatterScalar(frontmatterBlock: string, key: string): string | null {
