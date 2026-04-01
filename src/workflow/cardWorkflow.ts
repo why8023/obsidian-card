@@ -11,7 +11,7 @@ import { allocateCardBudget } from "../knowledge/budgetAllocator";
 import { hasReusableChunkAnalysis, isKnowledgeBearingAnalysis } from "../knowledge/chunkEligibility";
 import { GlobalRanker } from "../knowledge/globalRanker";
 import { KnowledgeExtractor } from "../knowledge/knowledgeExtractor";
-import { buildGlobalRankingPrompt, buildKnowledgeExtractionPrompt } from "../prompts/promptDefaults";
+import { buildCardCompositionPrompt, buildGlobalRankingPrompt, buildKnowledgeExtractionPrompt } from "../prompts/promptDefaults";
 import { resolveGenerationPrompt, type ResolvedGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
 import { DEFAULT_GENERATED_CARD_TAG } from "../settings";
@@ -31,14 +31,24 @@ import type {
 	TextRange,
 	TopicCompositionResult,
 } from "../types";
+import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { mapWithConcurrency } from "../utils/concurrency";
 import {
+	buildCardCompositionFingerprint,
 	buildKnowledgeExtractionFingerprint,
 	buildTopicGroupingFingerprint,
 	buildTopicPlanFingerprint,
 } from "../utils/generationFingerprints";
-import { writeApprovedCardGroups, type CardRegenerationOptions } from "../writing/flashcardWriter";
-import { writeDocumentMetadata, type DocumentMetadataWriteRequest } from "../writing/documentMetadataWriter";
+import {
+	writeApprovedCardGroups,
+	type CardRegenerationOptions,
+} from "../writing/flashcardWriter";
+import {
+	readDocumentMetadata,
+	writeDocumentMetadata,
+	type DocumentMetadataWriteRequest,
+	type PersistedDocumentMetadata,
+} from "../writing/documentMetadataWriter";
 
 interface FileProcessResult {
 	action: ReviewAction;
@@ -247,6 +257,7 @@ export class FlashcardWorkflow {
 			const analysisResults = await this.analyzeChunks(chunks, resolvedPrompt.prompt, extractFingerprint, debugRun, file, mode, progressContext);
 			const chunkAnalyses = analysisResults.map((result) => result.analysis);
 			const knowledgeAnalyses = chunkAnalyses.filter(isKnowledgeBearingAnalysis);
+			const persistedMetadata = readDocumentMetadata(this.plugin.app, file);
 
 			if (knowledgeAnalyses.length === 0) {
 				const documentMetadata = this.buildDocumentMetadataRequest({
@@ -297,7 +308,8 @@ export class FlashcardWorkflow {
 				groupingSystemPrompt,
 				knowledgeAnalyses,
 			);
-			const topics = await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(knowledgeAnalyses);
+			const topics = this.resolveReusableTopics(persistedMetadata, extractFingerprint, groupingFingerprint, debugRun)
+				?? await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(knowledgeAnalyses);
 			debugRun.log("topics", "Built chunk-group topics.", {
 				topicCount: topics.length,
 				topics,
@@ -329,13 +341,57 @@ export class FlashcardWorkflow {
 			const remainingLlmCalls = this.plugin.settings.generation.maxTaskLlmCalls
 				- this.countPendingChunkExtractions(chunks, extractFingerprint)
 				- 1;
-			const budgetPlan = allocateCardBudget(topics, this.plugin.settings.generation, remainingLlmCalls);
+			const budgetPlan = this.resolveReusableBudgetPlan(
+				persistedMetadata,
+				groupingFingerprint,
+				topics,
+				debugRun,
+			) ?? allocateCardBudget(topics, this.plugin.settings.generation, remainingLlmCalls);
 			const planFingerprint = buildTopicPlanFingerprint(
 				this.plugin.settings.generation,
 				topics,
-				remainingLlmCalls,
+				budgetPlan,
 			);
 			debugRun.log("budget", "Allocated card budget across grouped topics.", budgetPlan);
+
+			if (await this.isGenerationUpToDate({
+				file,
+				mode,
+				chunks,
+				chunkAnalyses,
+				topics,
+				budgetPlan,
+				customPrompt: resolvedPrompt.prompt,
+				extractFingerprint,
+				groupingFingerprint,
+				planFingerprint,
+				persistedMetadata,
+			})) {
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "writing",
+					currentChunkIndex: budgetPlan.selectedTopics.length,
+					totalChunks: Math.max(budgetPlan.selectedTopics.length, 1),
+					fileProgress: 1,
+					detail: "No content or generation changes were detected. Reusing the existing knowledge annotations and flashcards.",
+				});
+				if (mode !== "folder-file") {
+					await this.plugin.sidebar.refreshFromVault(file);
+				}
+				new Notice(`No content or generation changes were detected in ${file.basename}. Existing flashcards were kept.`);
+				const result = {
+					action: "confirm",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("up-to-date", {
+					budgetPlan,
+					fingerprints: {
+						extract: extractFingerprint,
+						group: groupingFingerprint,
+						plan: planFingerprint,
+					},
+				});
+				return result;
+			}
 
 			if (budgetPlan.selectedTopics.length === 0 || budgetPlan.totalPlannedCards === 0) {
 				const documentMetadata = this.buildDocumentMetadataRequest({
@@ -636,7 +692,10 @@ export class FlashcardWorkflow {
 		});
 		try {
 			if (documentMetadata) {
-				const didPersistDocumentMetadata = await writeDocumentMetadata(this.plugin.app, file, documentMetadata);
+				const didPersistDocumentMetadata = await writeDocumentMetadata(this.plugin.app, file, {
+					...documentMetadata,
+					insertedCardCount: insertedCount,
+				});
 				if (didPersistDocumentMetadata) {
 					debugRun.log("metadata:frontmatter", "Persisted document-level generation metadata to note frontmatter.", {
 						knowledgeChunkCount: documentMetadata.knowledgeChunkCount,
@@ -655,6 +714,260 @@ export class FlashcardWorkflow {
 			await this.plugin.sidebar.refreshFromVault(file);
 		}
 		return insertedCount;
+	}
+
+	private resolveReusableTopics(
+		persistedMetadata: PersistedDocumentMetadata,
+		extractFingerprint: string,
+		groupingFingerprint: string,
+		debugRun: DebugRun,
+	): KnowledgeTopic[] | null {
+		const persistedTopics = persistedMetadata.topics;
+		const generationMeta = persistedMetadata.generationMeta;
+		if (!persistedTopics || !generationMeta) {
+			return null;
+		}
+
+		if (
+			persistedTopics.groupFingerprint !== groupingFingerprint
+			|| generationMeta.fingerprints.extract !== extractFingerprint
+			|| generationMeta.fingerprints.group !== groupingFingerprint
+		) {
+			return null;
+		}
+
+		const topics = persistedTopics.topics.map((topic) => ({
+			...topic,
+			memberChunkIds: [...topic.memberChunkIds],
+		}));
+		if (topics.length === 0) {
+			return null;
+		}
+
+		debugRun.log("topics:cache", "Reused persisted chunk-group topics from note frontmatter.", {
+			topicCount: topics.length,
+			topics,
+		});
+		return topics;
+	}
+
+	private resolveReusableBudgetPlan(
+		persistedMetadata: PersistedDocumentMetadata,
+		groupingFingerprint: string,
+		topics: KnowledgeTopic[],
+		debugRun: DebugRun,
+	): BudgetPlan | null {
+		const topicPlan = persistedMetadata.topicPlan;
+		const budgetPlan = topicPlan?.budgetPlan;
+		if (!topicPlan || !budgetPlan) {
+			return null;
+		}
+
+		if (topicPlan.groupFingerprint !== groupingFingerprint) {
+			return null;
+		}
+
+		if (
+			budgetPlan.maxTotalCards !== this.plugin.settings.generation.maxTotalCardsPerDocument
+			|| budgetPlan.coreCardBudget !== this.plugin.settings.generation.coreCardBudget
+			|| budgetPlan.secondaryCardBudget !== this.plugin.settings.generation.secondaryCardBudget
+			|| budgetPlan.maxCardsPerTopic !== this.plugin.settings.generation.maxCardsPerTopic
+		) {
+			return null;
+		}
+
+		const knownTopicIds = new Set(topics.map((topic) => topic.topicId));
+		if (budgetPlan.selectedTopics.some((topic) => !knownTopicIds.has(topic.topicId))) {
+			return null;
+		}
+
+		const clonedBudgetPlan: BudgetPlan = {
+			maxTotalCards: budgetPlan.maxTotalCards,
+			coreCardBudget: budgetPlan.coreCardBudget,
+			secondaryCardBudget: budgetPlan.secondaryCardBudget,
+			maxCardsPerTopic: budgetPlan.maxCardsPerTopic,
+			totalPlannedCards: budgetPlan.totalPlannedCards,
+			selectedTopics: budgetPlan.selectedTopics.map((topic) => ({
+				topicId: topic.topicId,
+				tier: topic.tier,
+				cardCount: topic.cardCount,
+			})),
+		};
+
+		debugRun.log("budget:cache", "Reused persisted topic budget plan from note frontmatter.", clonedBudgetPlan);
+		return clonedBudgetPlan;
+	}
+
+	private async isGenerationUpToDate(options: {
+		file: TFile;
+		mode: GenerationMode;
+		chunks: ContentChunk[];
+		chunkAnalyses: KnowledgeChunkAnalysis[];
+		topics: KnowledgeTopic[];
+		budgetPlan: BudgetPlan;
+		customPrompt: string;
+		extractFingerprint: string;
+		groupingFingerprint: string;
+		planFingerprint: string;
+		persistedMetadata: PersistedDocumentMetadata;
+	}): Promise<boolean> {
+		const generationMeta = options.persistedMetadata.generationMeta;
+		if (!generationMeta) {
+			return false;
+		}
+
+		if (
+			generationMeta.fingerprints.extract !== options.extractFingerprint
+			|| generationMeta.fingerprints.group !== options.groupingFingerprint
+			|| generationMeta.fingerprints.plan !== options.planFingerprint
+		) {
+			return false;
+		}
+
+		const content = await this.loadFileContent(options.file);
+		const existingCards = this.collectScopedPluginGeneratedCards(
+			options.file,
+			content,
+			options.mode,
+			options.chunks,
+		);
+		if (options.budgetPlan.totalPlannedCards === 0) {
+			return existingCards.length === 0;
+		}
+
+		if (existingCards.length === 0) {
+			return false;
+		}
+
+		const expectedFingerprints = this.buildExpectedCardGenerationFingerprints(
+			options.topics,
+			options.budgetPlan,
+			options.chunks,
+			options.chunkAnalyses,
+			options.customPrompt,
+		);
+		if (expectedFingerprints.size === 0) {
+			return false;
+		}
+
+		const hasUnexpectedCards = existingCards.some((card) => (
+			!card.generationFingerprint || !expectedFingerprints.has(card.generationFingerprint)
+		));
+		if (hasUnexpectedCards) {
+			return false;
+		}
+
+		if (generationMeta.insertedCardCount !== null) {
+			return existingCards.length === generationMeta.insertedCardCount;
+		}
+
+		return Array.from(expectedFingerprints).every((fingerprint) => (
+			existingCards.some((card) => card.generationFingerprint === fingerprint)
+		));
+	}
+
+	private collectScopedPluginGeneratedCards(
+		file: TFile,
+		content: string,
+		mode: GenerationMode,
+		chunks: ContentChunk[],
+	) {
+		const regeneration = this.resolveRegenerationOptions(mode, chunks);
+		const pluginGeneratedEntries = collectExistingCardEntries(file, content)
+			.filter((entry) => entry.isPluginGenerated);
+		if (regeneration.mode === "all-plugin-generated") {
+			return pluginGeneratedEntries;
+		}
+
+		if (regeneration.mode === "none" || chunks.length === 0) {
+			return [];
+		}
+
+		const sortedChunks = [...chunks].sort((left, right) => left.range.from - right.range.from || left.range.to - right.range.to);
+		const selectedEntries = new Set<string>();
+
+		for (const [index, chunk] of sortedChunks.entries()) {
+			let cursor = Math.max(
+				chunk.range.to,
+				...((chunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.to)),
+			);
+			const nextChunkStart = this.resolveNextChunkStart(sortedChunks, index);
+
+			for (const entry of pluginGeneratedEntries) {
+				if (entry.blockRange.from < cursor || entry.blockRange.from >= nextChunkStart) {
+					continue;
+				}
+
+				const between = content.slice(cursor, entry.blockRange.from);
+				if (/\S/.test(between)) {
+					break;
+				}
+
+				selectedEntries.add(entry.id);
+				cursor = entry.blockRange.to;
+			}
+		}
+
+		return pluginGeneratedEntries.filter((entry) => selectedEntries.has(entry.id));
+	}
+
+	private buildExpectedCardGenerationFingerprints(
+		topics: KnowledgeTopic[],
+		budgetPlan: BudgetPlan,
+		chunks: ContentChunk[],
+		chunkAnalyses: KnowledgeChunkAnalysis[],
+		customPrompt: string,
+	): Set<string> {
+		const topicsById = new Map(topics.map((topic) => [topic.topicId, topic] as const));
+		const chunksByChunkId = new Map(chunks.map((chunk) => [chunk.chunkId, chunk] as const));
+		const analysesByChunkId = new Map(chunkAnalyses.map((analysis) => [analysis.chunkId, analysis] as const));
+		const fingerprints = new Set<string>();
+
+		for (const allocation of budgetPlan.selectedTopics) {
+			const topic = topicsById.get(allocation.topicId);
+			if (!topic) {
+				continue;
+			}
+
+			const topicChunks = topic.memberChunkIds
+				.map((chunkId) => chunksByChunkId.get(chunkId))
+				.filter((chunk): chunk is ContentChunk => chunk !== undefined);
+			const topicChunkAnalyses = topic.memberChunkIds
+				.map((chunkId) => analysesByChunkId.get(chunkId))
+				.filter((analysis): analysis is KnowledgeChunkAnalysis => analysis !== undefined);
+			if (topicChunks.length === 0 || topicChunkAnalyses.length === 0) {
+				continue;
+			}
+
+			const systemPrompt = buildCardCompositionPrompt({
+				cardCount: allocation.cardCount,
+			}, this.plugin.settings.prompts.cardCompositionPrompt, customPrompt);
+			fingerprints.add(buildCardCompositionFingerprint(
+				this.plugin.settings.generation.model,
+				this.plugin.settings.generation.temperature,
+				systemPrompt,
+				{
+					topic,
+					chunks: topicChunks,
+					chunkAnalyses: topicChunkAnalyses,
+					cardCount: allocation.cardCount,
+				} satisfies CompositionRequest,
+			));
+		}
+
+		return fingerprints;
+	}
+
+	private resolveNextChunkStart(chunks: ContentChunk[], index: number): number {
+		const nextChunk = chunks[index + 1];
+		if (!nextChunk) {
+			return Number.POSITIVE_INFINITY;
+		}
+
+		return Math.min(
+			nextChunk.range.from,
+			...((nextChunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.from)),
+		);
 	}
 
 	private appendComposedCards(

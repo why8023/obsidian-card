@@ -1,6 +1,6 @@
 import type { TFile } from "obsidian";
 
-import { collectKnowledgeAnnotations } from "../knowledge/knowledgeAnnotations";
+import { collectKnowledgeAnnotations, stripKnowledgeAnnotationMarkers } from "../knowledge/knowledgeAnnotations";
 import type { ContentChunk, ExistingKnowledgeAnnotation, TextRange } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import {
@@ -57,7 +57,7 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 	const cardRanges = collectExistingCardEntries(file, content).map((entry) => entry.blockRange);
 	const atomicBlocks = collectAtomicBlocks(content, cardRanges, contentStart);
 	const mergedBlocks = mergeBlocksByTargetSize(atomicBlocks, targetChunkCharacters);
-	const chunks = materializeChunks(file, mergedBlocks, existingAnnotations);
+	const chunks = materializeChunks(file, content, mergedBlocks, existingAnnotations);
 	return filterChunksByOffset(chunks, options.upToOffset);
 }
 
@@ -193,6 +193,7 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 
 function materializeChunks(
 	file: TFile,
+	content: string,
 	blocks: CandidateBlock[],
 	existingAnnotations: ExistingKnowledgeAnnotation[],
 ): ContentChunk[] {
@@ -203,8 +204,7 @@ function materializeChunks(
 		const sourceHash = hashContent(normalizedContent);
 		const occurrence = (hashOccurrences.get(sourceHash) ?? 0) + 1;
 		hashOccurrences.set(sourceHash, occurrence);
-		const overlappingAnnotations = existingAnnotations.filter((annotation) => isAnnotationContainedWithinBlock(annotation, block.range));
-		const matchingAnnotation = overlappingAnnotations.find((annotation) => annotation.data.hash === sourceHash);
+		const relatedAnnotations = findRelatedAnnotationsForBlock(existingAnnotations, block.range, content, sourceHash);
 
 		return {
 			file,
@@ -223,8 +223,8 @@ function materializeChunks(
 				to: block.range.to,
 			},
 			titleHint: buildChunkTitle(block.text, file.basename, occurrence),
-			existingAnnotations: overlappingAnnotations,
-			existingAnnotation: matchingAnnotation,
+			existingAnnotations: relatedAnnotations,
+			existingAnnotation: relatedAnnotations[0],
 		} satisfies ContentChunk;
 	});
 }
@@ -272,8 +272,77 @@ function findFirstLineIndex(lines: ReturnType<typeof collectLineInfos>, offset: 
 	return lines.length;
 }
 
-function isAnnotationContainedWithinBlock(annotation: ExistingKnowledgeAnnotation, blockRange: TextRange): boolean {
-	return annotation.bodyRange.from >= blockRange.from && annotation.bodyRange.to <= blockRange.to;
+function findRelatedAnnotationsForBlock(
+	annotations: ExistingKnowledgeAnnotation[],
+	blockRange: TextRange,
+	content: string,
+	sourceHash: string,
+): ExistingKnowledgeAnnotation[] {
+	const nearbyAnnotations = annotations.filter((annotation) => doesAnnotationTouchBlock(annotation, blockRange, content));
+	const hashMatchedAnnotations = nearbyAnnotations.filter((annotation) => computeAnnotationSourceHash(annotation, content) === sourceHash);
+	if (hashMatchedAnnotations.length > 0) {
+		return sortAnnotationsBySpecificity(hashMatchedAnnotations);
+	}
+
+	return sortAnnotationsBySpecificity(
+		nearbyAnnotations.filter((annotation) => isAnnotationBodyContainedWithinBlock(annotation, blockRange, content)),
+	);
+}
+
+function doesAnnotationTouchBlock(annotation: ExistingKnowledgeAnnotation, blockRange: TextRange, content: string): boolean {
+	const trimmedBody = trimContentRange(content, annotation.bodyRange.from, annotation.bodyRange.to);
+	if (trimmedBody.text.length > 0 && rangesOverlap({
+		from: trimmedBody.from,
+		to: trimmedBody.to,
+	}, blockRange)) {
+		return true;
+	}
+
+	return annotation.blockRange.from <= blockRange.from && annotation.blockRange.to >= blockRange.to;
+}
+
+function isAnnotationBodyContainedWithinBlock(
+	annotation: ExistingKnowledgeAnnotation,
+	blockRange: TextRange,
+	content: string,
+): boolean {
+	const trimmedBody = trimContentRange(content, annotation.bodyRange.from, annotation.bodyRange.to);
+	if (trimmedBody.text.length === 0) {
+		return false;
+	}
+
+	return trimmedBody.from >= blockRange.from && trimmedBody.to <= blockRange.to;
+}
+
+function computeAnnotationSourceHash(annotation: ExistingKnowledgeAnnotation, content: string): string {
+	const annotationBody = stripKnowledgeAnnotationMarkers(
+		content.slice(annotation.bodyRange.from, annotation.bodyRange.to),
+	);
+	if (annotationBody.length === 0) {
+		return "";
+	}
+
+	return hashContent(normalizeContentForHash(annotationBody));
+}
+
+function sortAnnotationsBySpecificity(annotations: ExistingKnowledgeAnnotation[]): ExistingKnowledgeAnnotation[] {
+	return [...annotations].sort((left, right) => {
+		const lengthDelta = (left.blockRange.to - left.blockRange.from) - (right.blockRange.to - right.blockRange.from);
+		if (lengthDelta !== 0) {
+			return lengthDelta;
+		}
+
+		const extractedAtDelta = right.data.extractedAt.localeCompare(left.data.extractedAt);
+		if (extractedAtDelta !== 0) {
+			return extractedAtDelta;
+		}
+
+		return right.blockRange.from - left.blockRange.from;
+	});
+}
+
+function rangesOverlap(left: TextRange, right: TextRange): boolean {
+	return left.to > right.from && left.from < right.to;
 }
 
 function filterChunksByOffset(chunks: ContentChunk[], upToOffset: number | undefined): ContentChunk[] {

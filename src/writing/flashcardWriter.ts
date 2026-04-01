@@ -1,6 +1,10 @@
 import type { TFile, Vault } from "obsidian";
 
-import { renderKnowledgeAnnotationEnd, renderKnowledgeAnnotationStart } from "../knowledge/knowledgeAnnotations";
+import {
+	renderKnowledgeAnnotationEnd,
+	renderKnowledgeAnnotationStart,
+	stripKnowledgeAnnotationMarkers,
+} from "../knowledge/knowledgeAnnotations";
 import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
 import type { ApprovedCardGroup, ContentChunk, GeneratedBasicCard, KnowledgeChunkAnalysis, TextRange } from "../types";
@@ -60,9 +64,8 @@ export async function writeApprovedCardGroups(
 			? isObarRecordContent(content, options.obarCompatibility)
 			: false;
 		const removableEntries = collectExistingCardEntries(file, content)
-			.filter((entry) => entry.isPluginGenerated)
-			.filter((entry) => shouldRemoveEntryForRegeneration(entry.blockRange, options?.regeneration));
-		const removableEntriesByChunkId = mapEntriesToChunks(sortedChunks, removableEntries, content, options?.regeneration);
+			.filter((entry) => entry.isPluginGenerated);
+		const removableEntriesByChunkId = mapEntriesToChunks(sortedChunks, removableEntries, content);
 		let workingContent = content;
 		insertedCount = 0;
 
@@ -182,13 +185,12 @@ function mapEntriesToChunks(
 	chunks: ContentChunk[],
 	entries: ReturnType<typeof collectExistingCardEntries>,
 	content: string,
-	regeneration: CardRegenerationOptions | undefined,
 ): Map<string, ReturnType<typeof collectExistingCardEntries>> {
 	const entriesByChunkId = new Map<string, ReturnType<typeof collectExistingCardEntries>>();
 
 	for (const [index, chunk] of chunks.entries()) {
 		const nextChunkStart = getNextChunkStart(chunks, index);
-		const associatedEntries = collectSequentialEntriesForChunk(chunk, entries, content, nextChunkStart, regeneration);
+		const associatedEntries = collectSequentialEntriesForChunk(chunk, entries, content, nextChunkStart);
 		entriesByChunkId.set(chunk.chunkId, associatedEntries);
 	}
 
@@ -200,7 +202,6 @@ function collectSequentialEntriesForChunk(
 	entries: ReturnType<typeof collectExistingCardEntries>,
 	content: string,
 	nextChunkStart: number,
-	regeneration: CardRegenerationOptions | undefined,
 ): ReturnType<typeof collectExistingCardEntries> {
 	const associatedEntries: ReturnType<typeof collectExistingCardEntries> = [];
 	let cursor = Math.max(
@@ -209,9 +210,6 @@ function collectSequentialEntriesForChunk(
 	);
 
 	for (const entry of entries) {
-		if (!shouldRemoveEntryForRegeneration(entry.blockRange, regeneration)) {
-			continue;
-		}
 		if (entry.blockRange.from < cursor || entry.blockRange.from >= nextChunkStart) {
 			continue;
 		}
@@ -294,13 +292,6 @@ function renderChunkArtifacts(
 	return `${annotationBlock}${newline}${newline}${renderInsertedCards(cards, newline, wrapEachCardWithObar)}`;
 }
 
-function stripKnowledgeAnnotationMarkers(value: string): string {
-	return value
-		.replace(/^\s*<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*$/gm, "")
-		.replace(/^\s*<!--\s*obcd-knowledge-end\s*-->\s*$/gm, "")
-		.trim();
-}
-
 function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis, newline: string): string {
 	const normalizedBody = bodyText.endsWith(newline) ? bodyText.slice(0, -newline.length) : bodyText;
 
@@ -321,7 +312,7 @@ function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis
 	].join(newline);
 }
 
-function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions | undefined): boolean {
+export function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions | undefined): boolean {
 	if (!regeneration || regeneration.mode === "none") {
 		return false;
 	}

@@ -7,43 +7,62 @@ const KNOWLEDGE_END_MARKER = "<!-- obcd-knowledge-end -->";
 
 export function collectKnowledgeAnnotations(content: string): ExistingKnowledgeAnnotation[] {
 	const annotations: ExistingKnowledgeAnnotation[] = [];
+	const openAnnotations: Array<{
+		start: number;
+		bodyStart: number;
+		data: KnowledgeAnnotationData;
+	}> = [];
 	let searchOffset = 0;
 
 	while (searchOffset < content.length) {
-		const start = content.indexOf(KNOWLEDGE_START_PREFIX, searchOffset);
-		if (start === -1) {
+		const nextStart = content.indexOf(KNOWLEDGE_START_PREFIX, searchOffset);
+		const nextEnd = content.indexOf(KNOWLEDGE_END_MARKER, searchOffset);
+		if (nextStart === -1 && nextEnd === -1) {
 			break;
 		}
 
-		const startCommentEnd = content.indexOf("-->", start);
-		if (startCommentEnd === -1) {
-			break;
+		if (nextStart !== -1 && (nextEnd === -1 || nextStart < nextEnd)) {
+			const startCommentEnd = content.indexOf("-->", nextStart);
+			if (startCommentEnd === -1) {
+				searchOffset = nextStart + KNOWLEDGE_START_PREFIX.length;
+				continue;
+			}
+
+			const data = parseKnowledgeStartComment(content.slice(nextStart, startCommentEnd + 3));
+			if (data !== null) {
+				openAnnotations.push({
+					start: nextStart,
+					bodyStart: startCommentEnd + 3,
+					data,
+				});
+			}
+
+			searchOffset = startCommentEnd + 3;
+			continue;
 		}
 
-		const end = content.indexOf(KNOWLEDGE_END_MARKER, startCommentEnd + 3);
-		if (end === -1) {
-			break;
-		}
-
-		const data = parseKnowledgeStartComment(content.slice(start, startCommentEnd + 3));
-		if (data !== null) {
+		const openAnnotation = openAnnotations.pop();
+		if (openAnnotation) {
 			annotations.push({
 				blockRange: {
-					from: start,
-					to: end + KNOWLEDGE_END_MARKER.length,
+					from: openAnnotation.start,
+					to: nextEnd + KNOWLEDGE_END_MARKER.length,
 				},
 				bodyRange: {
-					from: startCommentEnd + 3,
-					to: end,
+					from: openAnnotation.bodyStart,
+					to: nextEnd,
 				},
-				data,
+				data: openAnnotation.data,
 			});
 		}
 
-		searchOffset = end + KNOWLEDGE_END_MARKER.length;
+		searchOffset = nextEnd + KNOWLEDGE_END_MARKER.length;
 	}
 
-	return annotations;
+	return annotations.sort((left, right) => (
+		left.blockRange.from - right.blockRange.from
+		|| left.blockRange.to - right.blockRange.to
+	));
 }
 
 export function renderKnowledgeAnnotationStart(data: KnowledgeAnnotationData): string {
@@ -63,6 +82,13 @@ export function renderKnowledgeAnnotationStart(data: KnowledgeAnnotationData): s
 
 export function renderKnowledgeAnnotationEnd(): string {
 	return KNOWLEDGE_END_MARKER;
+}
+
+export function stripKnowledgeAnnotationMarkers(value: string): string {
+	return value
+		.replace(/^\s*<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*$/gm, "")
+		.replace(/^\s*<!--\s*obcd-knowledge-end\s*-->\s*$/gm, "")
+		.trim();
 }
 
 export function annotationContainsRange(annotation: ExistingKnowledgeAnnotation, range: TextRange): boolean {

@@ -1,5 +1,5 @@
 import type { FlashcardGenerationSettings } from "../settings";
-import type { CompositionRequest, KnowledgeChunkAnalysis, KnowledgeTopic } from "../types";
+import type { BudgetPlan, CompositionRequest, KnowledgeChunkAnalysis, KnowledgeTopic } from "../types";
 import { hashContent } from "./markdown";
 
 const FINGERPRINT_SCHEMA_VERSION = 1;
@@ -39,10 +39,12 @@ export function buildTopicPlanFingerprint(
 		"coreCardBudget" | "secondaryCardBudget" | "maxTotalCardsPerDocument" | "maxCardsPerTopic"
 	>,
 	topics: KnowledgeTopic[],
-	remainingLlmCalls: number,
+	budgetPlan: Pick<
+		BudgetPlan,
+		"maxTotalCards" | "coreCardBudget" | "secondaryCardBudget" | "maxCardsPerTopic" | "totalPlannedCards" | "selectedTopics"
+	>,
 ): string {
 	return buildStageFingerprint("plan", {
-		remainingLlmCalls,
 		budgets: {
 			coreCardBudget: settings.coreCardBudget,
 			secondaryCardBudget: settings.secondaryCardBudget,
@@ -57,6 +59,18 @@ export function buildTopicPlanFingerprint(
 			shouldCreateCards: topic.shouldCreateCards,
 			memberChunkIds: [...topic.memberChunkIds],
 		})),
+		budgetPlan: {
+			maxTotalCards: budgetPlan.maxTotalCards,
+			coreCardBudget: budgetPlan.coreCardBudget,
+			secondaryCardBudget: budgetPlan.secondaryCardBudget,
+			maxCardsPerTopic: budgetPlan.maxCardsPerTopic,
+			totalPlannedCards: budgetPlan.totalPlannedCards,
+			selectedTopics: budgetPlan.selectedTopics.map((topic) => ({
+				topicId: topic.topicId,
+				tier: topic.tier,
+				cardCount: topic.cardCount,
+			})),
+		},
 	});
 }
 
