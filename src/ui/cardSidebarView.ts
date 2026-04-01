@@ -26,10 +26,17 @@ interface CardTagFilterOption {
 	count: number;
 }
 
+interface SearchInputSelectionState {
+	wasFocused: boolean;
+	selectionStart: number | null;
+	selectionEnd: number | null;
+}
+
 export class CardSidebarView extends ItemView {
 	private readonly plugin: ObcdPlugin;
 	private unsubscribe: (() => void) | null = null;
 	private searchText = "";
+	private searchInputEl: HTMLInputElement | null = null;
 	private activeTagFilter: string | null = null;
 	private actionsInitialized = false;
 	private isColumnSettingsExpanded = false;
@@ -74,12 +81,14 @@ export class CardSidebarView extends ItemView {
 	async onClose(): Promise<void> {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.searchInputEl = null;
 		this.contentEl.empty();
 	}
 
 	private render(): void {
 		const state = this.plugin.sidebar.getSnapshot();
 		const { contentEl } = this;
+		this.searchInputEl = null;
 		contentEl.empty();
 
 		const rootEl = contentEl.createDiv({ cls: "obcd-sidebar" });
@@ -234,12 +243,15 @@ export class CardSidebarView extends ItemView {
 	private renderSearchBar(containerEl: HTMLElement): void {
 		const filterEl = containerEl.createDiv({ cls: "obcd-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
+		this.searchInputEl = search.inputEl;
 		search.setPlaceholder("Filter questions, tags, type, or source");
 		search.setValue(this.searchText);
 		search.onChange((value) => {
+			const selectionState = this.captureSearchInputSelection(search.inputEl);
 			this.searchText = value;
 			this.resetDeleteConfirmations();
 			this.render();
+			this.restoreSearchInputSelection(selectionState);
 		});
 	}
 
@@ -622,6 +634,31 @@ export class CardSidebarView extends ItemView {
 	private resetDeleteConfirmations(): void {
 		this.pendingSingleDeleteCardId = null;
 		this.isBulkDeleteConfirmationPending = false;
+	}
+
+	private captureSearchInputSelection(inputEl: HTMLInputElement): SearchInputSelectionState {
+		return {
+			wasFocused: document.activeElement === inputEl,
+			selectionStart: inputEl.selectionStart,
+			selectionEnd: inputEl.selectionEnd,
+		};
+	}
+
+	private restoreSearchInputSelection(selectionState: SearchInputSelectionState): void {
+		if (!selectionState.wasFocused || this.searchInputEl === null) {
+			return;
+		}
+
+		const maxOffset = this.searchInputEl.value.length;
+		const selectionStart = Math.min(selectionState.selectionStart ?? maxOffset, maxOffset);
+		const selectionEnd = Math.min(selectionState.selectionEnd ?? selectionStart, maxOffset);
+		this.searchInputEl.focus();
+
+		try {
+			this.searchInputEl.setSelectionRange(selectionStart, selectionEnd);
+		} catch {
+			// Ignore selection restoration failures on unsupported input states.
+		}
 	}
 
 	private createActionButton(

@@ -206,7 +206,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("服务商预设")
-			.setDesc("先选择平台预设，再按需调整实际请求的 Base URL。")
+			.setDesc("先选择平台预设，再按需调整实际请求使用的 base URL。")
 			.addDropdown((dropdown) => {
 				for (const [presetType, info] of Object.entries(PROVIDER_PRESET_INFO) as Array<[FlashcardProviderPresetType, typeof presetInfo]>) {
 					dropdown.addOption(presetType, info.label);
@@ -215,23 +215,22 @@ export class ObcdSettingTab extends PluginSettingTab {
 				dropdown
 					.setValue(activeProvider.presetType)
 					.onChange(async (value) => {
-						const currentProvider = getActiveProvider(this.plugin.settings);
 						const nextPresetType = value as FlashcardProviderPresetType;
-						const previousDefaultModel = getDefaultModelForPreset(currentProvider.presetType);
-						const nextDefaultModel = getDefaultModelForPreset(nextPresetType);
+						await this.commitSettingsUpdate(() => {
+							const currentProvider = getActiveProvider(this.plugin.settings);
+							const previousDefaultModel = getDefaultModelForPreset(currentProvider.presetType);
+							const nextDefaultModel = getDefaultModelForPreset(nextPresetType);
 
-						this.updateActiveProvider({
-							...currentProvider,
-							presetType: nextPresetType,
-							baseUrl: PROVIDER_PRESET_INFO[nextPresetType].defaultBaseUrl,
-						});
+							this.updateActiveProvider({
+								...currentProvider,
+								presetType: nextPresetType,
+								baseUrl: PROVIDER_PRESET_INFO[nextPresetType].defaultBaseUrl,
+							});
 
-						if (this.plugin.settings.generation.model.trim().length === 0 || this.plugin.settings.generation.model === previousDefaultModel) {
-							this.plugin.settings.generation.model = nextDefaultModel;
-						}
-
-						await this.plugin.saveSettings();
-						this.display();
+							if (this.plugin.settings.generation.model.trim().length === 0 || this.plugin.settings.generation.model === previousDefaultModel) {
+								this.plugin.settings.generation.model = nextDefaultModel;
+							}
+						}, { redisplay: true });
 					});
 			});
 
@@ -242,35 +241,33 @@ export class ObcdSettingTab extends PluginSettingTab {
 				.setPlaceholder(PROVIDER_PRESET_INFO[activeProvider.presetType].defaultBaseUrl)
 				.setValue(activeProvider.baseUrl)
 				.onChange(async (value) => {
-					this.updateActiveProvider({
-						...getActiveProvider(this.plugin.settings),
+					await this.updateActiveProviderSettings((provider) => ({
+						...provider,
 						baseUrl: value.trim(),
-					});
-					await this.plugin.saveSettings();
+					}));
 				}));
 
 		new Setting(containerEl)
-			.setName("API Key")
+			.setName("API key")
 			.setDesc(presetInfo.requireApiKey
 				? "当前预设必须填写。"
 				: "本地服务或代理服务可选。")
 			.addText((text) => {
 				text.inputEl.type = "password";
 				text
-					.setPlaceholder("输入 API Key")
+					.setPlaceholder("输入 API key")
 					.setValue(activeProvider.apiKey)
 					.onChange(async (value) => {
-						this.updateActiveProvider({
-							...getActiveProvider(this.plugin.settings),
+						await this.updateActiveProviderSettings((provider) => ({
+							...provider,
 							apiKey: value.trim(),
-						});
-						await this.plugin.saveSettings();
+						}));
 					});
 			});
 
 		new Setting(containerEl)
 			.setName("最终请求地址")
-			.setDesc("根据预设和 Base URL 自动计算。这是插件实际发起生成请求的终点地址。")
+			.setDesc("根据预设和 base URL 自动计算。这是插件实际发起生成请求的终点地址。")
 			.addText((text) => text
 				.setValue(getProviderChatCompletionsUrl(activeProvider))
 				.setDisabled(true));
@@ -287,13 +284,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 				.setPlaceholder(presetInfo.defaultModel)
 				.setValue(this.plugin.settings.generation.model)
 				.onChange(async (value) => {
-					this.plugin.settings.generation.model = value.trim();
-					await this.plugin.saveSettings();
+					await this.commitSettingsUpdate(() => {
+						this.plugin.settings.generation.model = value.trim();
+					});
 				}));
 
 		new Setting(containerEl)
 			.setName("连接测试")
-			.setDesc("使用当前基础 URL、API Key 和模型名称发起一次最小请求，检查接口是否可连通。")
+			.setDesc("使用当前基础 URL、API key 和模型名称发起一次最小请求，检查接口是否可连通。")
 			.addButton((button) => {
 				button
 					.setButtonText(this.isTestingConnection ? "测试中..." : "测试连接")
@@ -322,13 +320,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("6")
 				.setValue(String(this.plugin.settings.generation.coreCardBudget))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.coreCardBudget = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("次级卡片预算")
@@ -336,13 +335,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("4")
 				.setValue(String(this.plugin.settings.generation.secondaryCardBudget))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue >= 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue >= 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.secondaryCardBudget = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("单篇文档最大卡片数")
@@ -350,13 +350,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("10")
 				.setValue(String(this.plugin.settings.generation.maxTotalCardsPerDocument))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxTotalCardsPerDocument = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("单个主题最大卡片数")
@@ -364,13 +365,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("2")
 				.setValue(String(this.plugin.settings.generation.maxCardsPerTopic))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxCardsPerTopic = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("知识块目标长度")
@@ -378,27 +380,29 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("900")
 				.setValue(String(this.plugin.settings.generation.targetChunkCharacters))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue >= 200 && parsedValue <= 4000) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue >= 200 && parsedValue <= 4000,
+					(parsedValue) => {
 						this.plugin.settings.generation.targetChunkCharacters = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
-			.setName("单次任务 Token 上限")
+			.setName("单次任务 token 上限")
 			.setDesc("单次生成任务的硬上限。超过后会直接提示缩小范围。")
 			.addText((text) => text
 				.setPlaceholder("22000")
 				.setValue(String(this.plugin.settings.generation.maxTaskInputTokens))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxTaskInputTokens = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("单次任务分块上限")
@@ -406,13 +410,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("36")
 				.setValue(String(this.plugin.settings.generation.maxTaskChunks))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxTaskChunks = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("单次任务 API 调用上限")
@@ -420,13 +425,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("48")
 				.setValue(String(this.plugin.settings.generation.maxTaskLlmCalls))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue > 0,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxTaskLlmCalls = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("并行 API 请求上限")
@@ -434,13 +440,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("3")
 				.setValue(String(this.plugin.settings.generation.maxConcurrentLlmRequests))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue >= 1 && parsedValue <= 12) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseInt(nextValue, 10),
+					(parsedValue) => parsedValue >= 1 && parsedValue <= 12,
+					(parsedValue) => {
 						this.plugin.settings.generation.maxConcurrentLlmRequests = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("重新生成策略")
@@ -450,8 +457,9 @@ export class ObcdSettingTab extends PluginSettingTab {
 				.addOption("scope-rebuild", "仅重建当前范围")
 				.setValue(this.plugin.settings.generation.defaultRegenerationPolicy)
 				.onChange(async (value) => {
-					this.plugin.settings.generation.defaultRegenerationPolicy = value as RegenerationPolicy;
-					await this.plugin.saveSettings();
+					await this.commitSettingsUpdate(() => {
+						this.plugin.settings.generation.defaultRegenerationPolicy = value as RegenerationPolicy;
+					});
 				}));
 
 		new Setting(containerEl)
@@ -460,13 +468,14 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addText((text) => text
 				.setPlaceholder("0.2")
 				.setValue(String(this.plugin.settings.generation.temperature))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseFloat(value);
-					if (Number.isFinite(parsedValue) && parsedValue >= 0 && parsedValue <= 2) {
+				.onChange(async (value) => this.updateParsedNumberSetting(
+					value,
+					(nextValue) => Number.parseFloat(nextValue),
+					(parsedValue) => parsedValue >= 0 && parsedValue <= 2,
+					(parsedValue) => {
 						this.plugin.settings.generation.temperature = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
+					},
+				)));
 
 		new Setting(containerEl)
 			.setName("追加默认标签")
@@ -474,8 +483,9 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.addToggle((toggle) => toggle
 				.setValue(this.plugin.settings.generation.addObcdTag)
 				.onChange(async (value) => {
-					this.plugin.settings.generation.addObcdTag = value;
-					await this.plugin.saveSettings();
+					await this.commitSettingsUpdate(() => {
+						this.plugin.settings.generation.addObcdTag = value;
+					});
 				}));
 
 		new Setting(containerEl)
@@ -485,8 +495,9 @@ export class ObcdSettingTab extends PluginSettingTab {
 				.setPlaceholder(DEFAULT_GENERATED_CARD_TAG)
 				.setValue(this.plugin.settings.generation.defaultTag)
 				.onChange(async (value) => {
-					this.plugin.settings.generation.defaultTag = normalizeConfiguredDefaultTag(value, DEFAULT_GENERATED_CARD_TAG);
-					await this.plugin.saveSettings();
+					await this.commitSettingsUpdate(() => {
+						this.plugin.settings.generation.defaultTag = normalizeConfiguredDefaultTag(value, DEFAULT_GENERATED_CARD_TAG);
+					});
 				}));
 
 		new Setting(containerEl)
@@ -664,6 +675,39 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 	}
 
+	private async commitSettingsUpdate(update: () => void, options: { redisplay?: boolean } = {}): Promise<void> {
+		update();
+		await this.plugin.saveSettings();
+		if (options.redisplay) {
+			this.display();
+		}
+	}
+
+	private async updateActiveProviderSettings(
+		update: (provider: FlashcardProvider) => FlashcardProvider,
+		options: { redisplay?: boolean } = {},
+	): Promise<void> {
+		await this.commitSettingsUpdate(() => {
+			this.updateActiveProvider(update(getActiveProvider(this.plugin.settings)));
+		}, options);
+	}
+
+	private async updateParsedNumberSetting(
+		value: string,
+		parser: (value: string) => number,
+		isValid: (value: number) => boolean,
+		apply: (value: number) => void,
+	): Promise<void> {
+		const parsedValue = parser(value);
+		if (!Number.isFinite(parsedValue) || !isValid(parsedValue)) {
+			return;
+		}
+
+		await this.commitSettingsUpdate(() => {
+			apply(parsedValue);
+		});
+	}
+
 	private updateActiveProvider(provider: FlashcardProvider): void {
 		this.plugin.settings.providers = this.plugin.settings.providers.map((currentProvider) => (
 			currentProvider.id === provider.id ? provider : currentProvider
@@ -701,7 +745,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 		const normalizedModel = this.plugin.settings.generation.model.trim();
 
 		if (presetInfo.requireApiKey && activeProvider.apiKey.trim().length === 0) {
-			new Notice("请先填写 API Key，再测试连接。", 8000);
+			new Notice("请先填写 API key，再测试连接。", 8000);
 			return;
 		}
 

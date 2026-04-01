@@ -44,32 +44,20 @@ export class CardSidebarController {
 		this.activeFile = this.resolveActiveMarkdownFile();
 
 		this.plugin.registerEvent(this.plugin.app.workspace.on("file-open", (file) => {
-			const nextFile = isMarkdownFile(file) ? file : null;
-			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
-				return;
-			}
-			void this.handleActiveFileChange(nextFile, "workspace:file-open");
+			this.scheduleActiveFileChange(isMarkdownFile(file) ? file : null, "workspace:file-open");
 		}));
 
 		this.plugin.registerEvent(this.plugin.app.workspace.on("active-leaf-change", () => {
-			const nextFile = this.resolveActiveMarkdownFile();
-			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
-				return;
-			}
-			void this.handleActiveFileChange(nextFile, "workspace:active-leaf-change");
+			this.scheduleActiveFileChange(this.resolveActiveMarkdownFile(), "workspace:active-leaf-change");
 		}));
 
 		this.plugin.registerEvent(this.plugin.app.workspace.on("layout-change", () => {
-			const nextFile = this.resolveActiveMarkdownFile();
-			if ((nextFile?.path ?? null) === (this.activeFile?.path ?? null)) {
-				return;
-			}
-			void this.handleActiveFileChange(nextFile, "workspace:layout-change");
+			this.scheduleActiveFileChange(this.resolveActiveMarkdownFile(), "workspace:layout-change");
 		}));
 
 		this.plugin.registerEvent(this.plugin.app.vault.on("modify", (file) => {
 			if (isMarkdownFile(file) && this.activeFile?.path === file.path) {
-				void this.refreshDisplayedFileCards(file, "vault:modify");
+				this.scheduleDisplayedFileRefresh(file, "vault:modify");
 			}
 		}));
 
@@ -101,17 +89,26 @@ export class CardSidebarController {
 	}
 
 	async open(): Promise<void> {
-		await this.ensureViewOpen();
-		await this.refresh();
+		const nextFile = this.resolveActiveMarkdownFile();
+		await this.runSidebarTask(async () => {
+			await this.ensureViewOpen();
+			await this.handleActiveFileChange(nextFile, "manual-open");
+		}, "Failed to open the flashcard sidebar");
 	}
 
 	async refresh(): Promise<void> {
 		const nextFile = this.resolveActiveMarkdownFile();
-		await this.handleActiveFileChange(nextFile, "manual-refresh");
+		await this.runSidebarTask(
+			() => this.handleActiveFileChange(nextFile, "manual-refresh"),
+			"Failed to refresh the flashcard sidebar",
+		);
 	}
 
 	async refreshFromVault(forcedFile?: TFile | null): Promise<void> {
-		await this.refreshDisplayedFileCards(forcedFile ?? this.activeFile, "mutation:refresh");
+		await this.runSidebarTask(
+			() => this.refreshDisplayedFileCards(forcedFile ?? this.activeFile, "mutation:refresh"),
+			"Flashcards were updated, but the sidebar could not refresh",
+		);
 	}
 
 	async startGenerationProgress(progress: GenerationProgressState): Promise<void> {
@@ -238,6 +235,38 @@ export class CardSidebarController {
 		});
 	}
 
+	private scheduleActiveFileChange(file: TFile | null, reason: string): void {
+		if (this.isSameFilePath(file, this.activeFile)) {
+			return;
+		}
+
+		void this.runSidebarTask(() => this.handleActiveFileChange(file, reason));
+	}
+
+	private scheduleDisplayedFileRefresh(file: TFile | null, reason: string): void {
+		void this.runSidebarTask(() => this.refreshDisplayedFileCards(file, reason));
+	}
+
+	private async runSidebarTask(task: () => Promise<void>, failureMessage?: string): Promise<void> {
+		try {
+			await task();
+		} catch (error) {
+			this.handleSidebarTaskFailure(error, failureMessage);
+		}
+	}
+
+	private handleSidebarTaskFailure(error: unknown, failureMessage?: string): void {
+		if (this.isRefreshingFile) {
+			this.isRefreshingFile = false;
+			this.notify();
+		}
+		console.error("OBCD sidebar refresh failed", error);
+
+		if (failureMessage) {
+			new Notice(`${failureMessage}: ${getErrorMessage(error)}`, 8000);
+		}
+	}
+
 	private async refreshDisplayedFileCards(forcedFile?: TFile | null, reason = "unspecified"): Promise<void> {
 		const file = forcedFile ?? this.activeFile;
 		const token = ++this.refreshToken;
@@ -250,12 +279,21 @@ export class CardSidebarController {
 		}
 
 		this.isRefreshingFile = true;
-		const readResult = await this.readFileContent(file, reason);
-		if (token !== this.refreshToken) {
-			return;
-		}
+		try {
+			const readResult = await this.readFileContent(file, reason);
+			if (token !== this.refreshToken) {
+				return;
+			}
 
-		this.applyDisplayedFileContent(file, readResult.content);
+			this.applyDisplayedFileContent(file, readResult.content);
+		} catch (error) {
+			if (token === this.refreshToken) {
+				this.isRefreshingFile = false;
+				this.notify();
+			}
+
+			throw error;
+		}
 	}
 
 	private resolveActiveMarkdownFile(): TFile | null {
@@ -340,7 +378,7 @@ export class CardSidebarController {
 
 	private async handleActiveFileChange(file: TFile | null, reason = "unspecified"): Promise<void> {
 		const nextFile = isMarkdownFile(file) ? file : null;
-		const activeFileChanged = this.activeFile?.path !== nextFile?.path;
+		const activeFileChanged = !this.isSameFilePath(this.activeFile, nextFile);
 		this.activeFile = nextFile;
 		this.isRefreshingFile = nextFile !== null;
 		if (activeFileChanged) {
@@ -364,7 +402,7 @@ export class CardSidebarController {
 		}
 
 		if (this.activeFile?.path === file.path || oldPath === this.activeFile?.path) {
-			void this.refreshDisplayedFileCards(file, "vault:rename");
+			this.scheduleDisplayedFileRefresh(file, "vault:rename");
 		}
 	}
 
@@ -385,6 +423,10 @@ export class CardSidebarController {
 		for (const listener of this.listeners) {
 			listener();
 		}
+	}
+
+	private isSameFilePath(left: TFile | null | undefined, right: TFile | null | undefined): boolean {
+		return (left?.path ?? null) === (right?.path ?? null);
 	}
 }
 

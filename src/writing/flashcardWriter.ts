@@ -27,6 +27,25 @@ export async function writeApprovedCardGroups(
 	const chunks = options?.chunks ?? groups.map((group) => group.chunk);
 	const chunkAnalyses = options?.chunkAnalyses ?? groups.map((group) => group.analysis);
 	if (chunks.length === 0) {
+		if (!options?.regeneration || options.regeneration.mode === "none") {
+			return 0;
+		}
+
+		await vault.process(file, (content) => {
+			const removableEntries = collectExistingCardEntries(file, content)
+				.filter((entry) => entry.isPluginGenerated)
+				.filter((entry) => shouldRemoveEntryForRegeneration(entry.blockRange, options.regeneration));
+			if (removableEntries.length === 0) {
+				return content;
+			}
+
+			return removeRangesWithWhitespaceCleanup(
+				content,
+				mergeRanges(removableEntries.map((entry) => entry.blockRange)),
+				detectNewline(content),
+			);
+		});
+
 		return 0;
 	}
 

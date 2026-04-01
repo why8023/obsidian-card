@@ -208,6 +208,7 @@ export class FlashcardWorkflow {
 			this.assertAiConfigured();
 
 			if (chunks.length === 0) {
+				await this.writeArtifacts(file, [], [], [], mode);
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "preparing",
 					currentChunkIndex: 0,
