@@ -56,6 +56,10 @@
 	gap: 10px;
 }
 
+.obcd-sidebar-section-actions {
+	justify-content: flex-end;
+}
+
 .obcd-sidebar-progress {
 	padding: 12px;
 	border-radius: 12px;
@@ -180,18 +184,24 @@
 	width: 100%;
 }
 
-.obcd-sidebar-column-settings {
+.obcd-sidebar-column-settings,
+.obcd-sidebar-tag-filters {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 10px;
 	background: var(--background-primary-alt);
 	padding: 8px 10px;
 }
 
-.obcd-sidebar-column-settings summary {
+.obcd-sidebar-column-settings summary,
+.obcd-sidebar-tag-filters summary {
 	cursor: var(--cursor);
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--text-muted);
+}
+
+.obcd-sidebar-tag-filters .obcd-sidebar-scope {
+	margin-top: 10px;
 }
 
 .obcd-sidebar-column-options {

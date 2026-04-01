@@ -39,6 +39,7 @@ export class CardSidebarView extends ItemView {
 	private searchInputEl: HTMLInputElement | null = null;
 	private activeTagFilter: string | null = null;
 	private actionsInitialized = false;
+	private isTagFiltersExpanded = false;
 	private isColumnSettingsExpanded = false;
 	private selectedInsertedCardIds = new Set<string>();
 	private pendingSingleDeleteCardId: string | null = null;
@@ -124,6 +125,7 @@ export class CardSidebarView extends ItemView {
 		if (this.renderedDisplayFilePath !== displayFilePath) {
 			this.selectedInsertedCardIds.clear();
 			this.activeTagFilter = null;
+			this.isTagFiltersExpanded = false;
 			this.resetDeleteConfirmations();
 			this.renderedDisplayFilePath = displayFilePath;
 			return;
@@ -261,15 +263,17 @@ export class CardSidebarView extends ItemView {
 		state: CardSidebarSnapshot,
 	): void {
 		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
-		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
-
-		this.renderScopeFilters(headerEl, cards.length, this.getTagFilterOptions(cards), state.isMutating);
+		const tagFilters = this.getTagFilterOptions(cards);
+		this.renderScopeFilters(sectionEl, cards.length, tagFilters, state.isMutating);
 
 		const filteredCards = cards.filter((card) => this.matchesCard(card));
 		const selectedCount = this.selectedInsertedCardIds.size;
-		const actionsEl = headerEl.createDiv({ cls: "obcd-sidebar-actions" });
+		const shouldRenderActions = selectedCount > 0 || state.hasUndoableDelete;
+		const actionsEl = shouldRenderActions
+			? sectionEl.createDiv({ cls: "obcd-sidebar-actions obcd-sidebar-section-actions" })
+			: null;
 
-		if (selectedCount > 0) {
+		if (actionsEl !== null && selectedCount > 0) {
 			this.createActionButton(actionsEl, "Select all visible", () => {
 				for (const card of filteredCards) {
 					this.selectedInsertedCardIds.add(card.id);
@@ -299,7 +303,7 @@ export class CardSidebarView extends ItemView {
 			);
 		}
 
-		if (state.hasUndoableDelete) {
+		if (actionsEl !== null && state.hasUndoableDelete) {
 			this.createActionButton(actionsEl, "Undo delete", () => {
 				void this.handleUndoDelete();
 			}, { disabled: state.isMutating });
@@ -328,7 +332,20 @@ export class CardSidebarView extends ItemView {
 		tagFilters: CardTagFilterOption[],
 		isMutating: boolean,
 	): void {
-		const scopeEl = containerEl.createDiv({ cls: "obcd-sidebar-scope" });
+		if (tagFilters.length === 0) {
+			return;
+		}
+
+		const detailsEl = containerEl.createEl("details", { cls: "obcd-sidebar-tag-filters" });
+		detailsEl.open = this.isTagFiltersExpanded;
+		detailsEl.addEventListener("toggle", () => {
+			this.isTagFiltersExpanded = detailsEl.open;
+		});
+		detailsEl.createEl("summary", {
+			text: this.getTagFiltersSummaryLabel(totalCount, tagFilters),
+		});
+
+		const scopeEl = detailsEl.createDiv({ cls: "obcd-sidebar-scope" });
 		this.createScopeButton(scopeEl, `All cards (${totalCount})`, this.activeTagFilter === null, isMutating, () => {
 			if (this.activeTagFilter === null) {
 				return;
@@ -694,6 +711,19 @@ export class CardSidebarView extends ItemView {
 		if (isActive) {
 			button.buttonEl.addClass("is-active");
 		}
+	}
+
+	private getTagFiltersSummaryLabel(totalCount: number, tagFilters: CardTagFilterOption[]): string {
+		if (this.activeTagFilter === null) {
+			return `Tag filters: All cards (${totalCount})`;
+		}
+
+		const activeTagOption = tagFilters.find((tagFilter) => tagFilter.tag === this.activeTagFilter);
+		if (activeTagOption === undefined) {
+			return `Tag filters: ${this.activeTagFilter}`;
+		}
+
+		return `Tag filters: ${activeTagOption.tag} (${activeTagOption.count})`;
 	}
 
 	private isInteractiveEventTarget(target: EventTarget | null): boolean {
