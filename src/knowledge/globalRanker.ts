@@ -41,8 +41,11 @@ export class GlobalRanker {
 					content: JSON.stringify({
 						units: units.map((unit) => ({
 							id: unit.id,
+							chunkId: unit.chunkId,
 							sectionKey: unit.sectionKey,
 							headingPath: unit.headingPath,
+							chunkSummary: unit.chunkSummary,
+							groupLabel: unit.groupLabel,
 							statement: unit.statement,
 							kind: unit.kind,
 							importanceLocal: unit.importanceLocal,
@@ -105,12 +108,16 @@ function normalizeTopics(payload: unknown, units: KnowledgeUnit[], maxCardsPerTo
 		const memberUnits = memberUnitIds
 			.map((unitId) => unitsById.get(unitId))
 			.filter((unit): unit is KnowledgeUnit => unit !== undefined);
+		const memberChunkIds = Array.from(new Set(memberUnits.map((unit) => unit.chunkId)));
 		const coverageSections = Array.from(new Set(memberUnits.map((unit) => unit.sectionKey)));
+		const knowledgeGroup = collapseWhitespace(readString(rawTopic.knowledgeGroup)) || resolveDominantGroup(memberUnits);
 
 		topics.push({
-			topicId: `topic:${hashContent(`${canonicalStatement}\u0000${memberUnitIds.join(",")}`)}`,
+			topicId: `topic:${hashContent(`${knowledgeGroup}\u0000${canonicalStatement}\u0000${memberUnitIds.join(",")}`)}`,
 			canonicalStatement,
+			knowledgeGroup,
 			memberUnitIds,
+			memberChunkIds,
 			importanceGlobal: normalizeImportance(rawTopic.importanceGlobal),
 			coverageSections,
 			tier: normalizeTier(rawTopic.tier),
@@ -133,7 +140,7 @@ function buildFallbackTopics(units: KnowledgeUnit[], maxCardsPerTopic: number): 
 			continue;
 		}
 
-		const key = collapseWhitespace(unit.statement).toLowerCase();
+		const key = `${collapseWhitespace(unit.groupLabel).toLowerCase()}\u0000${collapseWhitespace(unit.statement).toLowerCase()}`;
 		const group = grouped.get(key) ?? [];
 		group.push(unit);
 		grouped.set(key, group);
@@ -144,11 +151,14 @@ function buildFallbackTopics(units: KnowledgeUnit[], maxCardsPerTopic: number): 
 			const canonicalStatement = group[0]?.statement ?? "";
 			const importanceGlobal = group.reduce((sum, unit) => sum + scoreUnit(unit), 0) / Math.max(group.length, 1);
 			const tier = importanceGlobal >= 0.72 ? "core" : "secondary";
+			const knowledgeGroup = resolveDominantGroup(group);
 
 			return {
 				topicId: `topic:${hashContent(group.map((unit) => unit.id).join(","))}`,
 				canonicalStatement,
+				knowledgeGroup,
 				memberUnitIds: group.map((unit) => unit.id),
+				memberChunkIds: Array.from(new Set(group.map((unit) => unit.chunkId))),
 				importanceGlobal: Number.parseFloat(importanceGlobal.toFixed(2)),
 				coverageSections: Array.from(new Set(group.map((unit) => unit.sectionKey))),
 				tier,
@@ -163,6 +173,30 @@ function buildFallbackTopics(units: KnowledgeUnit[], maxCardsPerTopic: number): 
 			} satisfies KnowledgeTopic;
 		})
 		.sort((left, right) => right.importanceGlobal - left.importanceGlobal);
+}
+
+function resolveDominantGroup(units: KnowledgeUnit[]): string {
+	const counts = new Map<string, number>();
+
+	for (const unit of units) {
+		const group = collapseWhitespace(unit.groupLabel);
+		if (group.length === 0) {
+			continue;
+		}
+
+		counts.set(group, (counts.get(group) ?? 0) + 1);
+	}
+
+	let selectedGroup = "";
+	let selectedCount = -1;
+	for (const [group, count] of counts) {
+		if (count > selectedCount) {
+			selectedGroup = group;
+			selectedCount = count;
+		}
+	}
+
+	return selectedGroup.length > 0 ? selectedGroup : "未分组知识面";
 }
 
 function scoreUnit(unit: KnowledgeUnit): number {

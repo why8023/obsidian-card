@@ -23,7 +23,7 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 11;
+const SETTINGS_SCHEMA_VERSION = 12;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
 export type OversizeStrategy = "chapter-planning" | "refuse-or-scope";
@@ -39,6 +39,7 @@ export interface FlashcardGenerationSettings {
 	secondaryCardBudget: number;
 	maxTotalCardsPerDocument: number;
 	maxCardsPerTopic: number;
+	targetChunkCharacters: number;
 	maxKnowledgeUnitsPerChunk: number;
 	maxChunksForDirectGlobal: number;
 	maxTokensForDirectGlobal: number;
@@ -101,6 +102,7 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	secondaryCardBudget: 4,
 	maxTotalCardsPerDocument: 10,
 	maxCardsPerTopic: 2,
+	targetChunkCharacters: 900,
 	maxKnowledgeUnitsPerChunk: 4,
 	maxChunksForDirectGlobal: 18,
 	maxTokensForDirectGlobal: 12000,
@@ -379,6 +381,20 @@ export class ObcdSettingTab extends PluginSettingTab {
 					const parsedValue = Number.parseInt(value, 10);
 					if (Number.isFinite(parsedValue) && parsedValue > 0) {
 						this.plugin.settings.generation.maxCardsPerTopic = parsedValue;
+						await this.plugin.saveSettings();
+					}
+				}));
+
+		new Setting(containerEl)
+			.setName("知识块目标长度")
+			.setDesc("按正文内容切块时优先接近这个字符数。标题只提供上下文，不再直接决定块边界。")
+			.addText((text) => text
+				.setPlaceholder("900")
+				.setValue(String(this.plugin.settings.generation.targetChunkCharacters))
+				.onChange(async (value) => {
+					const parsedValue = Number.parseInt(value, 10);
+					if (Number.isFinite(parsedValue) && parsedValue >= 200 && parsedValue <= 4000) {
+						this.plugin.settings.generation.targetChunkCharacters = parsedValue;
 						await this.plugin.saveSettings();
 					}
 				}));
@@ -818,6 +834,7 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 		secondaryCardBudget: readNumber(generationSource.secondaryCardBudget, fallback.secondaryCardBudget, { min: 0, max: 50 }),
 		maxTotalCardsPerDocument: readNumber(generationSource.maxTotalCardsPerDocument, fallback.maxTotalCardsPerDocument, { min: 1, max: 80 }),
 		maxCardsPerTopic: readNumber(generationSource.maxCardsPerTopic, fallback.maxCardsPerTopic, { min: 1, max: 5 }),
+		targetChunkCharacters: readNumber(generationSource.targetChunkCharacters, fallback.targetChunkCharacters, { min: 200, max: 4000 }),
 		maxKnowledgeUnitsPerChunk: readNumber(
 			generationSource.maxKnowledgeUnitsPerChunk,
 			legacyMaxCardsPerChunk > 0 ? Math.max(fallback.maxKnowledgeUnitsPerChunk, legacyMaxCardsPerChunk) : fallback.maxKnowledgeUnitsPerChunk,

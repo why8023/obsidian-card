@@ -165,9 +165,12 @@ function normalizeSectionTopics(payload: unknown, group: SectionTopicGroup, maxS
 			id: `hier:${hashContent(`${group.sectionKey}\u0000${statement}\u0000${index}`)}`,
 			sourceUnitIds: flattenSourceUnitIds(memberUnits),
 			filePath: memberUnits[0]!.filePath,
+			chunkId: memberUnits[0]!.chunkId,
 			sectionKey: memberUnits[0]!.sectionKey,
 			headingPath: [...memberUnits[0]!.headingPath],
 			titleHint: group.title,
+			chunkSummary: group.title,
+			groupLabel: resolveDominantGroup(memberUnits),
 			statement,
 			kind: "core-concept",
 			importanceLocal: normalizeImportance(rawTopic.importanceLocal),
@@ -190,11 +193,41 @@ function compressSectionHeuristically(group: SectionTopicGroup, maxSummaryTopics
 			id: `hier:${hashContent(`${group.sectionKey}\u0000${unit.id}\u0000${index}`)}`,
 			sourceUnitIds: [...unit.sourceUnitIds],
 			titleHint: group.title,
+			chunkSummary: unit.chunkSummary || group.title,
+			groupLabel: unit.groupLabel || resolveDominantGroup(group.units),
 		}));
 }
 
 function flattenSourceUnitIds(units: KnowledgeUnit[]): string[] {
 	return Array.from(new Set(units.flatMap((unit) => unit.sourceUnitIds)));
+}
+
+function resolveDominantGroup(units: KnowledgeUnit[]): string {
+	const counts = new Map<string, number>();
+
+	for (const unit of units) {
+		const label = collapseWhitespace(unit.groupLabel);
+		if (label.length === 0) {
+			continue;
+		}
+
+		counts.set(label, (counts.get(label) ?? 0) + 1);
+	}
+
+	let selectedLabel = "";
+	let selectedCount = -1;
+	for (const [label, count] of counts) {
+		if (count > selectedCount) {
+			selectedLabel = label;
+			selectedCount = count;
+		}
+	}
+
+	return selectedLabel.length > 0 ? selectedLabel : groupFallback(units);
+}
+
+function groupFallback(units: KnowledgeUnit[]): string {
+	return units[0]?.headingPath[0] ?? units[0]?.titleHint ?? "未分组知识面";
 }
 
 function normalizeImportance(value: unknown): number {

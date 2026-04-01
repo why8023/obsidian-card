@@ -18,6 +18,7 @@ import { DEFAULT_GENERATED_CARD_TAG } from "../settings";
 import type {
 	ApprovedCardGroup,
 	BudgetPlan,
+	ChunkAnalysisResult,
 	CompositionRequest,
 	ContentChunk,
 	GeneratedBasicCard,
@@ -25,6 +26,7 @@ import type {
 	GenerationProgressPhase,
 	GenerationProgressState,
 	GenerationStrategy,
+	KnowledgeChunkAnalysis,
 	KnowledgeTopic,
 	KnowledgeUnit,
 	PlanningResult,
@@ -82,7 +84,9 @@ export class FlashcardWorkflow {
 			}
 
 			const content = await this.loadFileContent(target.file);
-			const chunks = buildFileChunks(target.file, content);
+			const chunks = buildFileChunks(target.file, content, {
+				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
+			});
 			const progressContext = {
 				currentFileIndex: 1,
 				totalFiles: 1,
@@ -103,6 +107,7 @@ export class FlashcardWorkflow {
 			const fullContent = editor.getValue();
 			const scopedContent = fullContent.slice(0, target.cursorOffset);
 			const chunks = buildFileChunks(target.file, fullContent, {
+				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
 				upToOffset: target.cursorOffset,
 			});
 			const progressContext = {
@@ -123,7 +128,9 @@ export class FlashcardWorkflow {
 			}
 
 			const content = editor.getValue();
-			const allChunks = buildFileChunks(target.file, content);
+			const allChunks = buildFileChunks(target.file, content, {
+				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
+			});
 			const sectionChunks = this.findCurrentSectionChunks(allChunks, target.cursorOffset);
 			if (sectionChunks.length === 0) {
 				new Notice("Move the cursor into a heading section before generating flashcards for the current section.");
@@ -169,7 +176,9 @@ export class FlashcardWorkflow {
 			for (const [fileIndex, file] of markdownFiles.entries()) {
 				try {
 					const content = await this.loadFileContent(file);
-					const chunks = buildFileChunks(file, content);
+					const chunks = buildFileChunks(file, content, {
+						targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
+					});
 					const progressContext = {
 						currentFileIndex: fileIndex + 1,
 						totalFiles: markdownFiles.length,
@@ -306,7 +315,27 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			const knowledgeUnits = await this.extractKnowledgeUnits(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
+			const analysisResults = await this.analyzeChunks(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
+			const chunkAnalyses = analysisResults.map((result) => result.analysis);
+			const knowledgeUnits = analysisResults.flatMap((result) => result.units);
+			if (chunkAnalyses.length === 0) {
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "extracting",
+					currentChunkIndex: chunks.length,
+					totalChunks: chunks.length,
+					fileProgress: 1,
+					detail: "The scope did not contain any knowledge-bearing blocks worth analyzing.",
+				});
+				await this.writeArtifacts(file, chunks, [], [], mode);
+				new Notice(`No knowledge-bearing blocks were found in ${file.basename}.`);
+				const result = {
+					action: "confirm",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("no-chunk-analyses", result);
+				return result;
+			}
+
 			if (knowledgeUnits.length === 0) {
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "extracting",
@@ -315,9 +344,10 @@ export class FlashcardWorkflow {
 					fileProgress: 1,
 					detail: "The scope did not yield durable knowledge units worth turning into cards.",
 				});
-				new Notice(`No useful knowledge units were found in ${file.basename}.`);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				new Notice(`Chunk analysis was updated in ${file.basename}, but no useful knowledge units were found.`);
 				const result = {
-					action: isBatchMode ? "skip-file" : "cancel",
+					action: "confirm",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
 				await debugRun.finish("no-knowledge-units", result);
@@ -335,9 +365,10 @@ export class FlashcardWorkflow {
 				progressContext,
 			);
 			if (rankingUnits.length === 0) {
-				new Notice(`The current scope in ${file.basename} did not retain any high-value section summaries for ranking.`);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				new Notice(`Chunk analysis was updated in ${file.basename}, but no high-value knowledge surfaces survived ranking.`);
 				const result = {
-					action: isBatchMode ? "skip-file" : "cancel",
+					action: "confirm",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
 				await debugRun.finish("no-ranking-units", result);
@@ -359,9 +390,10 @@ export class FlashcardWorkflow {
 			});
 
 			if (topics.length === 0) {
-				new Notice(`No document-level topics survived ranking for ${file.basename}.`);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				new Notice(`Chunk analysis was updated in ${file.basename}, but no document-level topics survived ranking.`);
 				const result = {
-					action: isBatchMode ? "skip-file" : "cancel",
+					action: "confirm",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
 				await debugRun.finish("no-topics", result);
@@ -378,9 +410,10 @@ export class FlashcardWorkflow {
 			debugRun.log("budget", "Allocated document card budget.", budgetPlan);
 
 			if (budgetPlan.selectedTopics.length === 0 || budgetPlan.totalPlannedCards === 0) {
-				new Notice(`The ranked topics in ${file.basename} did not justify any card budget.`);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				new Notice(`Chunk analysis was updated in ${file.basename}, but the ranked topics did not justify any card budget.`);
 				const result = {
-					action: isBatchMode ? "skip-file" : "cancel",
+					action: "confirm",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
 				await debugRun.finish("no-budgeted-topics", result);
@@ -390,6 +423,7 @@ export class FlashcardWorkflow {
 			const composedGroups = await this.composeCardGroups(
 				file,
 				chunks,
+				chunkAnalyses,
 				knowledgeUnits,
 				rankingUnits,
 				topics,
@@ -402,9 +436,10 @@ export class FlashcardWorkflow {
 			);
 
 			if (composedGroups.length === 0) {
-				new Notice(`No valid cards were composed for ${file.basename}.`);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				new Notice(`Chunk analysis was updated in ${file.basename}, but no valid cards were composed.`);
 				const result = {
-					action: isBatchMode ? "skip-file" : "cancel",
+					action: "confirm",
 					insertedCount: 0,
 				} satisfies FileProcessResult;
 				await debugRun.finish("no-composed-cards", result);
@@ -418,13 +453,7 @@ export class FlashcardWorkflow {
 				fileProgress: 0.94,
 				detail: "Rebuilding cards inside the current scope and writing the final result.",
 			});
-			const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, composedGroups, {
-				obarCompatibility: this.plugin.settings.compatibility.obar,
-				regeneration: this.resolveRegenerationOptions(mode, chunks),
-			});
-			if (!isBatchMode) {
-				await this.plugin.sidebar.refreshFromVault(file);
-			}
+			const insertedCount = await this.writeArtifacts(file, chunks, chunkAnalyses, composedGroups, mode);
 			debugRun.recordWrite({
 				insertedCount,
 				approvedCount: composedGroups.reduce((sum, group) => sum + group.cards.length, 0),
@@ -461,28 +490,40 @@ export class FlashcardWorkflow {
 		}
 	}
 
-	private async extractKnowledgeUnits(
+	private async analyzeChunks(
 		chunks: ContentChunk[],
 		customPrompt: string,
 		debugRun: DebugRun,
 		file: TFile,
 		mode: GenerationMode,
 		progressContext: GenerationProgressContext,
-	): Promise<KnowledgeUnit[]> {
+	): Promise<ChunkAnalysisResult[]> {
+		const analyzableChunks = chunks;
+		if (analyzableChunks.length === 0) {
+			this.updateGenerationProgress(file, mode, progressContext, {
+				phase: "extracting",
+				currentChunkIndex: 0,
+				totalChunks: chunks.length,
+				fileProgress: 0.54,
+				detail: "No knowledge chunks were found in this scope.",
+			});
+			return [];
+		}
+
 		const extractor = new KnowledgeExtractor(this.plugin.settings, customPrompt, debugRun);
-		const maxConcurrency = this.resolveLlmConcurrency(chunks.length);
-		const chunkErrors = new Array<string | null>(chunks.length).fill(null);
+		const maxConcurrency = this.resolveLlmConcurrency(analyzableChunks.length);
+		const chunkErrors = new Array<string | null>(analyzableChunks.length).fill(null);
 		let completedChunks = 0;
 
 		this.updateGenerationProgress(file, mode, progressContext, {
 			phase: "extracting",
 			currentChunkIndex: 0,
-			totalChunks: chunks.length,
+			totalChunks: analyzableChunks.length,
 			fileProgress: 0.16,
-			detail: `Extracting knowledge from ${chunks.length} chunk${chunks.length === 1 ? "" : "s"} with up to ${maxConcurrency} concurrent request${maxConcurrency === 1 ? "" : "s"}.`,
+			detail: `Extracting knowledge from ${analyzableChunks.length} chunk${analyzableChunks.length === 1 ? "" : "s"} with up to ${maxConcurrency} concurrent request${maxConcurrency === 1 ? "" : "s"}.`,
 		});
 
-		const extractedUnits = await mapWithConcurrency(chunks, maxConcurrency, async (chunk, index) => {
+		const analysisResults = await mapWithConcurrency(analyzableChunks, maxConcurrency, async (chunk, index) => {
 			try {
 				return await extractor.extract(chunk, index);
 			} catch (error) {
@@ -491,19 +532,22 @@ export class FlashcardWorkflow {
 					filePath: chunk.filePath,
 					titleHint: chunk.titleHint ?? "",
 				});
-				return [];
+				return null;
 			} finally {
 				completedChunks += 1;
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "extracting",
 					currentChunkIndex: completedChunks,
-					totalChunks: chunks.length,
-					fileProgress: this.getPhaseProgressFromCompletionCount(0.16, 0.54, chunks.length, completedChunks),
-					detail: this.describeCompletedChunkProgress(chunk, completedChunks, chunks.length),
+					totalChunks: analyzableChunks.length,
+					fileProgress: this.getPhaseProgressFromCompletionCount(0.16, 0.54, analyzableChunks.length, completedChunks),
+					detail: this.describeCompletedChunkProgress(chunk, completedChunks, analyzableChunks.length),
 				});
 			}
 		});
-		const units = extractedUnits.flat();
+		const results = analysisResults
+			.filter((result): result is ChunkAnalysisResult => result !== null)
+			.filter((result) => result.units.length > 0);
+		const units = results.flatMap((result) => result.units);
 		const failedChunks = chunkErrors.filter((error): error is string => error !== null);
 
 		if (failedChunks.length > 0 && units.length === 0) {
@@ -514,7 +558,7 @@ export class FlashcardWorkflow {
 			new Notice(`Some chunks failed during knowledge extraction and were skipped. ${failedChunks.length} chunk error(s).`, 8000);
 		}
 
-		return units;
+		return results;
 	}
 
 	private async prepareUnitsForRanking(
@@ -550,6 +594,7 @@ export class FlashcardWorkflow {
 	private async composeCardGroups(
 		file: TFile,
 		chunks: ContentChunk[],
+		chunkAnalyses: KnowledgeChunkAnalysis[],
 		originalKnowledgeUnits: KnowledgeUnit[],
 		rankingUnits: KnowledgeUnit[],
 		topics: KnowledgeTopic[],
@@ -563,7 +608,8 @@ export class FlashcardWorkflow {
 		const originalUnitsById = new Map(originalKnowledgeUnits.map((unit) => [unit.id, unit] as const));
 		const rankingUnitsById = new Map(rankingUnits.map((unit) => [unit.id, unit] as const));
 		const topicsById = new Map(topics.map((topic) => [topic.topicId, topic] as const));
-		const chunksBySectionKey = new Map(chunks.map((chunk) => [chunk.sectionKey, chunk] as const));
+		const chunksByChunkId = new Map(chunks.map((chunk) => [chunk.chunkId, chunk] as const));
+		const analysesByChunkId = new Map(chunkAnalyses.map((analysis) => [analysis.chunkId, analysis] as const));
 		const composer = new CardComposer(this.plugin.settings, customPrompt, debugRun);
 		const groupedCards = new Map<string, ApprovedCardGroup>();
 		const seenCards = new Set<string>();
@@ -586,15 +632,21 @@ export class FlashcardWorkflow {
 				const topicUnits = topic
 					? this.resolveOriginalUnitsForTopic(topic, rankingUnitsById, originalUnitsById)
 					: [];
+				const topicChunkAnalyses = topic
+					? topic.memberChunkIds
+						.map((chunkId) => analysesByChunkId.get(chunkId))
+						.filter((analysis): analysis is KnowledgeChunkAnalysis => analysis !== undefined)
+					: [];
 
 				try {
-					if (!topic || topicUnits.length === 0) {
+					if (!topic || topicUnits.length === 0 || topicChunkAnalyses.length === 0) {
 						return null;
 					}
 
 					const composition = await composer.compose({
 						topic,
 						units: topicUnits,
+						chunkAnalyses: topicChunkAnalyses,
 						cardCount: allocation.cardCount,
 						strategy,
 					} satisfies CompositionRequest, index);
@@ -627,7 +679,7 @@ export class FlashcardWorkflow {
 				continue;
 			}
 
-			this.appendComposedCards(result.composition, result.topicUnits, chunksBySectionKey, groupedCards, seenCards);
+			this.appendComposedCards(result.composition, result.topicUnits, analysesByChunkId, chunksByChunkId, groupedCards, seenCards);
 		}
 
 		return Array.from(groupedCards.values())
@@ -635,10 +687,30 @@ export class FlashcardWorkflow {
 			.sort((left, right) => left.chunk.insertOffset - right.chunk.insertOffset);
 	}
 
+	private async writeArtifacts(
+		file: TFile,
+		chunks: ContentChunk[],
+		chunkAnalyses: KnowledgeChunkAnalysis[],
+		groups: ApprovedCardGroup[],
+		mode: GenerationMode,
+	): Promise<number> {
+		const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groups, {
+			chunks,
+			chunkAnalyses,
+			obarCompatibility: this.plugin.settings.compatibility.obar,
+			regeneration: this.resolveRegenerationOptions(mode, chunks),
+		});
+		if (mode !== "folder-file") {
+			await this.plugin.sidebar.refreshFromVault(file);
+		}
+		return insertedCount;
+	}
+
 	private appendComposedCards(
 		composition: TopicCompositionResult,
 		topicUnits: KnowledgeUnit[],
-		chunksBySectionKey: Map<string, ContentChunk>,
+		analysesByChunkId: Map<string, KnowledgeChunkAnalysis>,
+		chunksByChunkId: Map<string, ContentChunk>,
 		groupedCards: Map<string, ApprovedCardGroup>,
 		seenCards: Set<string>,
 	): void {
@@ -646,13 +718,15 @@ export class FlashcardWorkflow {
 			return;
 		}
 
-		const anchorChunk = this.resolveAnchorChunk(topicUnits, chunksBySectionKey);
-		if (!anchorChunk) {
+		const anchorChunk = this.resolveAnchorChunk(topicUnits, chunksByChunkId);
+		const anchorAnalysis = anchorChunk ? analysesByChunkId.get(anchorChunk.chunkId) : undefined;
+		if (!anchorChunk || !anchorAnalysis) {
 			return;
 		}
 
-		const group = groupedCards.get(anchorChunk.sectionKey) ?? {
+		const group = groupedCards.get(anchorChunk.chunkId) ?? {
 			chunk: anchorChunk,
+			analysis: anchorAnalysis,
 			cards: [],
 		};
 
@@ -667,7 +741,7 @@ export class FlashcardWorkflow {
 			group.cards.push(normalizedCard);
 		}
 
-		groupedCards.set(anchorChunk.sectionKey, group);
+		groupedCards.set(anchorChunk.chunkId, group);
 	}
 
 	private resolveOriginalUnitsForTopic(
@@ -689,15 +763,28 @@ export class FlashcardWorkflow {
 			.filter((unit): unit is KnowledgeUnit => unit !== undefined);
 	}
 
-	private resolveAnchorChunk(topicUnits: KnowledgeUnit[], chunksBySectionKey: Map<string, ContentChunk>): ContentChunk | null {
+	private resolveAnchorChunk(topicUnits: KnowledgeUnit[], chunksByChunkId: Map<string, ContentChunk>): ContentChunk | null {
+		const chunkScores = new Map<string, { chunk: ContentChunk; score: number }>();
+
 		for (const unit of topicUnits) {
-			const chunk = chunksBySectionKey.get(unit.sectionKey);
-			if (chunk) {
-				return chunk;
+			const chunk = chunksByChunkId.get(unit.chunkId);
+			if (!chunk) {
+				continue;
 			}
+
+			const score = chunkScores.get(unit.chunkId) ?? {
+				chunk,
+				score: 0,
+			};
+			score.score += unit.importanceLocal;
+			chunkScores.set(unit.chunkId, score);
 		}
 
-		return null;
+		return Array.from(chunkScores.values())
+			.sort((left, right) => (
+				right.score - left.score
+				|| right.chunk.range.to - left.chunk.range.to
+			))[0]?.chunk ?? null;
 	}
 
 	private findCurrentSectionChunks(chunks: ContentChunk[], cursorOffset: number): ContentChunk[] {

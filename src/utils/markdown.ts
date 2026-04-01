@@ -5,7 +5,7 @@ export interface HeadingInfo {
 	lineEnd: number;
 }
 
-interface LineInfo {
+export interface LineInfo {
 	text: string;
 	start: number;
 	end: number;
@@ -16,7 +16,7 @@ export function detectNewline(content: string): string {
 }
 
 export function findFrontmatterEnd(content: string): number {
-	const lines = getLineInfos(content);
+	const lines = collectLineInfos(content);
 	const firstLine = lines[0];
 	if (!firstLine || firstLine.text.trim() !== "---") {
 		return 0;
@@ -38,7 +38,7 @@ export function findFrontmatterEnd(content: string): number {
 }
 
 export function collectMarkdownHeadings(content: string): HeadingInfo[] {
-	const lines = getLineInfos(content);
+	const lines = collectLineInfos(content);
 	const headings: HeadingInfo[] = [];
 	let fenceMarker: string | null = null;
 
@@ -108,6 +108,14 @@ export function trimContentRange(content: string, from: number, to: number): { t
 
 export function collapseWhitespace(value: string): string {
 	return value.replace(/\s+/g, " ").trim();
+}
+
+export function normalizeContentForHash(value: string): string {
+	return value
+		.replace(/\r\n/g, "\n")
+		.replace(/[^\S\n]+/g, " ")
+		.replace(/\n{3,}/g, "\n\n")
+		.trim();
 }
 
 export function makePreview(value: string, maxLength = 240): string {
@@ -181,7 +189,7 @@ export function hashContent(value: string): string {
 	return `fnv1a:${hash.toString(16).padStart(8, "0")}`;
 }
 
-function getLineInfos(content: string): LineInfo[] {
+export function collectLineInfos(content: string): LineInfo[] {
 	if (content.length === 0) {
 		return [];
 	}

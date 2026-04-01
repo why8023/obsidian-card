@@ -21,8 +21,8 @@ export function buildReviewGroups(results: ChunkGenerationResult[]): ReviewGroup
 			seenKeys.add(dedupeKey);
 
 			candidates.push({
-				id: `${result.chunk.sectionKey}-${candidates.length}`,
-				chunkId: result.chunk.sectionKey,
+				id: `${result.chunk.chunkId}-${candidates.length}`,
+				chunkId: result.chunk.chunkId,
 				filePath: result.chunk.filePath,
 				titleHint: result.chunk.titleHint,
 				sourcePreview: makePreview(result.chunk.text),

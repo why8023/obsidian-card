@@ -1,9 +1,10 @@
 import type { TFile, Vault } from "obsidian";
 
+import { renderKnowledgeAnnotationEnd, renderKnowledgeAnnotationStart } from "../knowledge/knowledgeAnnotations";
 import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
-import type { ApprovedCardGroup, GeneratedBasicCard, TextRange } from "../types";
-import { GENERATED_CARD_TYPE } from "../types";
+import type { ApprovedCardGroup, ContentChunk, GeneratedBasicCard, KnowledgeChunkAnalysis, TextRange } from "../types";
+import { GENERATED_CARD_TYPE, KNOWLEDGE_ANNOTATION_VERSION } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { detectNewline } from "../utils/markdown";
 
@@ -17,21 +18,64 @@ export async function writeApprovedCardGroups(
 	file: TFile,
 	groups: ApprovedCardGroup[],
 	options?: {
+		chunks?: ContentChunk[];
+		chunkAnalyses?: KnowledgeChunkAnalysis[];
 		obarCompatibility?: ObarCompatibilityConfig;
 		regeneration?: CardRegenerationOptions;
 	},
 ): Promise<number> {
-	if (groups.length === 0) {
+	const chunks = options?.chunks ?? groups.map((group) => group.chunk);
+	const chunkAnalyses = options?.chunkAnalyses ?? groups.map((group) => group.analysis);
+	if (chunks.length === 0) {
 		return 0;
 	}
 
+	const analysisByChunkId = new Map(chunkAnalyses.map((analysis) => [analysis.chunkId, analysis] as const));
+	const cardsByChunkId = new Map(groups.map((group) => [group.chunk.chunkId, group.cards] as const));
+	const sortedChunks = [...chunks].sort((left, right) => left.range.from - right.range.from || left.range.to - right.range.to);
 	let insertedCount = 0;
+
 	await vault.process(file, (content) => {
-		const preparedContent = pruneCardsBeforeInsert(file, content, options?.regeneration);
-		const result = insertCardGroups(preparedContent, groups, options);
-		insertedCount = result.insertedCount;
-		return result.content;
+		const newline = detectNewline(content);
+		const shouldUseObarWrapper = options?.obarCompatibility !== undefined
+			? isObarRecordContent(content, options.obarCompatibility)
+			: false;
+		const removableEntries = collectExistingCardEntries(file, content)
+			.filter((entry) => entry.isPluginGenerated)
+			.filter((entry) => shouldRemoveEntryForRegeneration(entry.blockRange, options?.regeneration));
+		const removableEntriesByChunkId = mapEntriesToChunks(sortedChunks, removableEntries, content, options?.regeneration);
+		let workingContent = content;
+		insertedCount = 0;
+
+		for (let index = sortedChunks.length - 1; index >= 0; index -= 1) {
+			const chunk = sortedChunks[index]!;
+			const analysis = analysisByChunkId.get(chunk.chunkId);
+			const cards = cardsByChunkId.get(chunk.chunkId) ?? [];
+			const existingAnnotations = chunk.existingAnnotations ?? [];
+			const needsRewrite = analysis !== undefined || existingAnnotations.length > 0 || cards.length > 0;
+			if (!needsRewrite) {
+				continue;
+			}
+
+			insertedCount += cards.length;
+			const replaceStart = Math.min(
+				chunk.range.from,
+				...existingAnnotations.map((annotation) => annotation.blockRange.from),
+			);
+			const replaceEnd = resolveChunkReplaceEnd(
+				chunk,
+				removableEntriesByChunkId.get(chunk.chunkId) ?? [],
+				content,
+				getNextChunkStart(sortedChunks, index),
+			);
+			const bodyText = stripKnowledgeAnnotationMarkers(workingContent.slice(chunk.range.from, chunk.range.to));
+			const replacement = renderChunkArtifacts(bodyText, analysis, cards, newline, shouldUseObarWrapper);
+			workingContent = `${workingContent.slice(0, replaceStart)}${replacement}${workingContent.slice(replaceEnd)}`;
+		}
+
+		return workingContent;
 	});
+
 	return insertedCount;
 }
 
@@ -106,59 +150,149 @@ export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): strin
 	].join(newline);
 }
 
-function insertCardGroups(
+function mapEntriesToChunks(
+	chunks: ContentChunk[],
+	entries: ReturnType<typeof collectExistingCardEntries>,
 	content: string,
-	groups: ApprovedCardGroup[],
-	options?: {
-		obarCompatibility?: ObarCompatibilityConfig;
-		regeneration?: CardRegenerationOptions;
-	},
-): { content: string; insertedCount: number } {
-	const newline = detectNewline(content);
-	const shouldUseObarWrapper = options?.obarCompatibility !== undefined
-		? isObarRecordContent(content, options.obarCompatibility)
-		: false;
-	const sortedGroups = [...groups]
-		.filter((group) => group.cards.length > 0)
-		.sort((left, right) => (
-			right.chunk.insertOffset - left.chunk.insertOffset || right.chunk.range.from - left.chunk.range.from
-		));
+	regeneration: CardRegenerationOptions | undefined,
+): Map<string, ReturnType<typeof collectExistingCardEntries>> {
+	const entriesByChunkId = new Map<string, ReturnType<typeof collectExistingCardEntries>>();
 
-	let workingContent = content;
-	let insertedCount = 0;
-
-	for (const group of sortedGroups) {
-		const blockToWrite = renderInsertedCards(group.cards, newline, shouldUseObarWrapper);
-		insertedCount += group.cards.length;
-		workingContent = insertBlockAt(workingContent, group.chunk.insertOffset, blockToWrite, newline);
+	for (const [index, chunk] of chunks.entries()) {
+		const nextChunkStart = getNextChunkStart(chunks, index);
+		const associatedEntries = collectSequentialEntriesForChunk(chunk, entries, content, nextChunkStart, regeneration);
+		entriesByChunkId.set(chunk.chunkId, associatedEntries);
 	}
 
-	return {
-		content: workingContent,
-		insertedCount,
-	};
+	return entriesByChunkId;
 }
 
-function pruneCardsBeforeInsert(file: TFile, content: string, regeneration: CardRegenerationOptions | undefined): string {
+function collectSequentialEntriesForChunk(
+	chunk: ContentChunk,
+	entries: ReturnType<typeof collectExistingCardEntries>,
+	content: string,
+	nextChunkStart: number,
+	regeneration: CardRegenerationOptions | undefined,
+): ReturnType<typeof collectExistingCardEntries> {
+	const associatedEntries: ReturnType<typeof collectExistingCardEntries> = [];
+	let cursor = Math.max(
+		chunk.range.to,
+		...(chunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.to),
+	);
+
+	for (const entry of entries) {
+		if (!shouldRemoveEntryForRegeneration(entry.blockRange, regeneration)) {
+			continue;
+		}
+		if (entry.blockRange.from < cursor || entry.blockRange.from >= nextChunkStart) {
+			continue;
+		}
+
+		const between = content.slice(cursor, entry.blockRange.from);
+		if (/\S/.test(between)) {
+			break;
+		}
+
+		associatedEntries.push(entry);
+		cursor = entry.blockRange.to;
+	}
+
+	return associatedEntries;
+}
+
+function resolveChunkReplaceEnd(
+	chunk: ContentChunk,
+	entries: ReturnType<typeof collectExistingCardEntries>,
+	content: string,
+	nextChunkStart: number,
+): number {
+	const baseEnd = Math.max(
+		chunk.range.to,
+		...(chunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.to),
+	);
+	if (entries.length === 0) {
+		return baseEnd;
+	}
+
+	let replaceEnd = baseEnd;
+	for (const entry of entries) {
+		const between = content.slice(replaceEnd, entry.blockRange.from);
+		if (/\S/.test(between)) {
+			break;
+		}
+
+		replaceEnd = entry.blockRange.to;
+	}
+
+	return extendWhitespaceOnly(content, replaceEnd, nextChunkStart);
+}
+
+function extendWhitespaceOnly(content: string, from: number, limit: number): number {
+	let index = from;
+
+	while (index < limit && /\s/.test(content[index] ?? "")) {
+		index += 1;
+	}
+
+	return index;
+}
+
+function getNextChunkStart(chunks: ContentChunk[], index: number): number {
+	const nextChunk = chunks[index + 1];
+	if (!nextChunk) {
+		return Number.POSITIVE_INFINITY;
+	}
+
+	return Math.min(
+		nextChunk.range.from,
+		...((nextChunk.existingAnnotations ?? []).map((annotation) => annotation.blockRange.from)),
+	);
+}
+
+function renderChunkArtifacts(
+	bodyText: string,
+	analysis: KnowledgeChunkAnalysis | undefined,
+	cards: GeneratedBasicCard[],
+	newline: string,
+	wrapEachCardWithObar: boolean,
+): string {
+	const annotationBlock = analysis
+		? renderKnowledgeBlock(bodyText, analysis, newline)
+		: bodyText;
+	if (cards.length === 0) {
+		return annotationBlock;
+	}
+
+	return `${annotationBlock}${newline}${newline}${renderInsertedCards(cards, newline, wrapEachCardWithObar)}`;
+}
+
+function stripKnowledgeAnnotationMarkers(value: string): string {
+	return value
+		.replace(/^\s*<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*$/gm, "")
+		.replace(/^\s*<!--\s*obcd-knowledge-end\s*-->\s*$/gm, "")
+		.trim();
+}
+
+function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis, newline: string): string {
+	const normalizedBody = bodyText.endsWith(newline) ? bodyText.slice(0, -newline.length) : bodyText;
+
+	return [
+		renderKnowledgeAnnotationStart({
+			version: KNOWLEDGE_ANNOTATION_VERSION,
+			hash: analysis.hash,
+			summary: analysis.summary,
+			group: analysis.group,
+		}),
+		normalizedBody,
+		renderKnowledgeAnnotationEnd(),
+	].join(newline);
+}
+
+function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions | undefined): boolean {
 	if (!regeneration || regeneration.mode === "none") {
-		return content;
+		return false;
 	}
 
-	const entries = collectExistingCardEntries(file, content);
-	const rangesToRemove = entries
-		.filter((entry) => entry.isPluginGenerated)
-		.filter((entry) => shouldRemoveEntryForRegeneration(entry.blockRange, regeneration))
-		.map((entry) => entry.blockRange);
-
-	if (rangesToRemove.length === 0) {
-		return content;
-	}
-
-	const newline = detectNewline(content);
-	return removeRangesWithWhitespaceCleanup(content, mergeRanges(rangesToRemove), newline);
-}
-
-function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions): boolean {
 	if (regeneration.mode === "all-plugin-generated") {
 		return true;
 	}
@@ -179,48 +313,6 @@ function renderInsertedCards(cards: GeneratedBasicCard[], newline: string, wrapE
 			return wrapEachCardWithObar ? renderObarWrappedBlock(renderedCard, newline) : renderedCard;
 		})
 		.join(`${newline}${newline}`);
-}
-
-function insertBlockAt(content: string, offset: number, block: string, newline: string): string {
-	const safeOffset = Math.max(0, Math.min(offset, content.length));
-	const before = content.slice(0, safeOffset);
-	const after = content.slice(safeOffset);
-	const prefix = buildInsertPrefix(before, newline);
-	const suffix = buildInsertSuffix(after, newline);
-
-	return `${before}${prefix}${block}${suffix}${after}`;
-}
-
-function buildInsertPrefix(before: string, newline: string): string {
-	if (before.length === 0) {
-		return "";
-	}
-
-	if (before.endsWith(`${newline}${newline}`)) {
-		return "";
-	}
-
-	if (before.endsWith(newline)) {
-		return newline;
-	}
-
-	return `${newline}${newline}`;
-}
-
-function buildInsertSuffix(after: string, newline: string): string {
-	if (after.length === 0) {
-		return newline;
-	}
-
-	if (after.startsWith(`${newline}${newline}`)) {
-		return "";
-	}
-
-	if (after.startsWith(newline)) {
-		return newline;
-	}
-
-	return `${newline}${newline}`;
 }
 
 function sanitizeTags(tags: string[]): string[] {

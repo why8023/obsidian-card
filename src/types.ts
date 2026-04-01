@@ -14,6 +14,7 @@ export type KnowledgeUnitKind =
 	| "ignore";
 export type TopicTier = "core" | "secondary";
 export const GENERATED_CARD_TYPE = "obcd";
+export const KNOWLEDGE_ANNOTATION_VERSION = 1;
 export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind"] as const;
 export type SidebarTableColumnId = (typeof SIDEBAR_TABLE_COLUMN_IDS)[number];
 
@@ -30,9 +31,24 @@ export interface GenerationTarget {
 	cursorOffset?: number;
 }
 
+export interface KnowledgeAnnotationData {
+	version: number;
+	hash: string;
+	summary: string;
+	group: string;
+}
+
+export interface ExistingKnowledgeAnnotation {
+	blockRange: TextRange;
+	bodyRange: TextRange;
+	data: KnowledgeAnnotationData;
+}
+
 export interface ContentChunk {
 	file: TFile;
 	filePath: string;
+	chunkId: string;
+	isKnowledgeCandidate: boolean;
 	text: string;
 	range: TextRange;
 	kind: ContentChunkKind;
@@ -43,6 +59,8 @@ export interface ContentChunk {
 	insertOffset: number;
 	bodyRange: TextRange;
 	titleHint?: string;
+	existingAnnotations?: ExistingKnowledgeAnnotation[];
+	existingAnnotation?: ExistingKnowledgeAnnotation;
 }
 
 export interface GeneratedBasicCard {
@@ -68,9 +86,12 @@ export interface KnowledgeUnit {
 	id: string;
 	sourceUnitIds: string[];
 	filePath: string;
+	chunkId: string;
 	sectionKey: string;
 	headingPath: string[];
 	titleHint?: string;
+	chunkSummary: string;
+	groupLabel: string;
 	statement: string;
 	kind: KnowledgeUnitKind;
 	importanceLocal: number;
@@ -78,6 +99,23 @@ export interface KnowledgeUnit {
 	evidenceExcerpt: string;
 	sourceHash: string;
 	tokenEstimate: number;
+}
+
+export interface KnowledgeChunkAnalysis {
+	chunkId: string;
+	filePath: string;
+	sectionKey: string;
+	titleHint?: string;
+	headingPath: string[];
+	hash: string;
+	summary: string;
+	group: string;
+}
+
+export interface ChunkAnalysisResult {
+	chunk: ContentChunk;
+	analysis: KnowledgeChunkAnalysis;
+	units: KnowledgeUnit[];
 }
 
 export interface KnowledgeTopicEvidence {
@@ -88,7 +126,9 @@ export interface KnowledgeTopicEvidence {
 export interface KnowledgeTopic {
 	topicId: string;
 	canonicalStatement: string;
+	knowledgeGroup: string;
 	memberUnitIds: string[];
+	memberChunkIds: string[];
 	importanceGlobal: number;
 	coverageSections: string[];
 	tier: TopicTier;
@@ -132,13 +172,14 @@ export interface PlanningResult {
 export interface CardDraftSource {
 	topicId: string;
 	unitIds: string[];
-	sectionKeys: string[];
+	chunkIds: string[];
 	strategy: GenerationStrategy;
 }
 
 export interface CompositionRequest {
 	topic: KnowledgeTopic;
 	units: KnowledgeUnit[];
+	chunkAnalyses: KnowledgeChunkAnalysis[];
 	cardCount: number;
 	strategy: GenerationStrategy;
 }
@@ -172,6 +213,7 @@ export interface ReviewGroup {
 
 export interface ApprovedCardGroup {
 	chunk: ContentChunk;
+	analysis: KnowledgeChunkAnalysis;
 	cards: GeneratedBasicCard[];
 }
 

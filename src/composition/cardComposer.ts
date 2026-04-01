@@ -31,12 +31,23 @@ export class CardComposer {
 					topic: {
 						topicId: request.topic.topicId,
 						tier: request.topic.tier,
+						knowledgeGroup: request.topic.knowledgeGroup,
 						canonicalStatement: request.topic.canonicalStatement,
 						recommendedCardCount: request.topic.recommendedCardCount,
 					},
+					knowledgeBlocks: request.chunkAnalyses.map((analysis) => ({
+						chunkId: analysis.chunkId,
+						titleHint: analysis.titleHint ?? "",
+						headingPath: analysis.headingPath,
+						summary: analysis.summary,
+						group: analysis.group,
+					})),
 					sourceUnits: request.units.map((unit) => ({
 						id: unit.id,
+						chunkId: unit.chunkId,
 						headingPath: unit.headingPath,
+						chunkSummary: unit.chunkSummary,
+						groupLabel: unit.groupLabel,
 						statement: unit.statement,
 						candidateQuestionIntent: unit.candidateQuestionIntent,
 						evidenceExcerpt: unit.evidenceExcerpt,
@@ -58,7 +69,7 @@ export class CardComposer {
 			source: {
 				topicId: request.topic.topicId,
 				unitIds: request.units.map((unit) => unit.id),
-				sectionKeys: Array.from(new Set(request.units.map((unit) => unit.sectionKey))),
+				chunkIds: Array.from(new Set(request.units.map((unit) => unit.chunkId))),
 				strategy: request.strategy,
 			},
 		};
