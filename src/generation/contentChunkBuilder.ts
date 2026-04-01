@@ -194,18 +194,12 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 		return [];
 	}
 
-	const minChunkCharacters = Math.max(120, Math.round(targetChunkCharacters * 0.45));
-	const softChunkCharacters = Math.max(minChunkCharacters, Math.round(targetChunkCharacters * 0.8));
-	const maxChunkCharacters = Math.max(targetChunkCharacters + 200, Math.round(targetChunkCharacters * 1.6));
 	const merged: CandidateBlock[] = [];
 	let current = cloneBlock(blocks[0]!);
 
 	for (const nextBlock of blocks.slice(1)) {
 		const mergedLength = current.text.length + 2 + nextBlock.text.length;
-		const shouldSoftSplit = current.text.length >= softChunkCharacters && mergedLength > targetChunkCharacters;
-		const shouldHardSplit = mergedLength > maxChunkCharacters && current.text.length >= minChunkCharacters;
-
-		if (shouldSoftSplit || shouldHardSplit) {
+		if (mergedLength > targetChunkCharacters) {
 			merged.push(current);
 			current = cloneBlock(nextBlock);
 			continue;
