@@ -2,8 +2,9 @@ import type { App, TFile } from "obsidian";
 
 import type { ResolvedGenerationPrompt } from "../prompts/promptResolver";
 import type { BudgetPlan, GenerationMode, KnowledgeTopic } from "../types";
+import { findFrontmatterEnd } from "../utils/markdown";
 
-const DOCUMENT_METADATA_SCHEMA_VERSION = 1;
+const DOCUMENT_METADATA_SCHEMA_VERSION = 2;
 
 export const OBCD_TOPICS_FRONTMATTER_KEY = "obcd_topics";
 export const OBCD_TOPIC_PLAN_FRONTMATTER_KEY = "obcd_topic_plan";
@@ -49,10 +50,13 @@ export interface PersistedDocumentGenerationMeta {
 		group: string;
 		plan: string;
 	};
+	documentFingerprint: string;
+	configFingerprint: string;
 	knowledgeChunkCount: number;
 	topicCount: number;
 	plannedCardCount: number;
 	insertedCardCount: number | null;
+	cardGenerationFingerprints: string[];
 }
 
 export interface PersistedDocumentTopicPlan {
@@ -80,10 +84,13 @@ export interface DocumentMetadataWriteRequest {
 	extractFingerprint: string;
 	groupFingerprint: string;
 	planFingerprint: string;
+	documentFingerprint: string;
+	configFingerprint: string;
 	knowledgeChunkCount: number;
 	topics: KnowledgeTopic[];
 	budgetPlan: BudgetPlan | null;
 	remainingLlmCalls: number | null;
+	cardGenerationFingerprints: string[];
 	insertedCardCount?: number;
 }
 
@@ -142,10 +149,13 @@ export async function writeDocumentMetadata(
 			group: request.groupFingerprint,
 			plan: request.planFingerprint,
 		},
+		documentFingerprint: request.documentFingerprint,
+		configFingerprint: request.configFingerprint,
 		knowledgeChunkCount: request.knowledgeChunkCount,
 		topicCount: request.topics.length,
 		plannedCardCount: request.budgetPlan?.totalPlannedCards ?? 0,
 		insertedCardCount: request.insertedCardCount ?? 0,
+		cardGenerationFingerprints: normalizeCardGenerationFingerprints(request.cardGenerationFingerprints),
 	});
 
 	await app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
@@ -156,16 +166,17 @@ export async function writeDocumentMetadata(
 	return true;
 }
 
-export function readDocumentMetadata(app: App, file: TFile): PersistedDocumentMetadata {
-	const frontmatter = app.metadataCache.getFileCache(file)?.frontmatter;
+export function readDocumentMetadata(app: App, file: TFile, content?: string): PersistedDocumentMetadata {
+	const frontmatter = extractPersistedMetadataFrontmatter(content)
+		?? app.metadataCache.getFileCache(file)?.frontmatter;
 	if (!frontmatter) {
-		return {
-			topics: null,
-			topicPlan: null,
-			generationMeta: null,
-		};
+		return createEmptyDocumentMetadata();
 	}
 
+	return parsePersistedDocumentMetadata(frontmatter);
+}
+
+function parsePersistedDocumentMetadata(frontmatter: Record<string, unknown>): PersistedDocumentMetadata {
 	return {
 		topics: parsePersistedTopics(frontmatter[OBCD_TOPICS_FRONTMATTER_KEY]),
 		topicPlan: parsePersistedTopicPlan(frontmatter[OBCD_TOPIC_PLAN_FRONTMATTER_KEY]),
@@ -276,10 +287,13 @@ function parsePersistedGenerationMeta(value: unknown): PersistedDocumentGenerati
 			group?: unknown;
 			plan?: unknown;
 		};
+		documentFingerprint?: unknown;
+		configFingerprint?: unknown;
 		knowledgeChunkCount?: unknown;
 		topicCount?: unknown;
 		plannedCardCount?: unknown;
 		insertedCardCount?: unknown;
+		cardGenerationFingerprints?: unknown;
 	}>(value);
 	if (!parsed || !isObject(parsed.fingerprints)) {
 		return null;
@@ -313,12 +327,15 @@ function parsePersistedGenerationMeta(value: unknown): PersistedDocumentGenerati
 			group,
 			plan,
 		},
+		documentFingerprint: readString(parsed.documentFingerprint),
+		configFingerprint: readString(parsed.configFingerprint),
 		knowledgeChunkCount: Math.max(0, Math.round(readNumber(parsed.knowledgeChunkCount))),
 		topicCount: Math.max(0, Math.round(readNumber(parsed.topicCount))),
 		plannedCardCount: Math.max(0, Math.round(readNumber(parsed.plannedCardCount))),
 		insertedCardCount: typeof parsed.insertedCardCount === "number" && Number.isFinite(parsed.insertedCardCount)
 			? Math.max(0, Math.round(parsed.insertedCardCount))
 			: null,
+		cardGenerationFingerprints: normalizeCardGenerationFingerprints(parsed.cardGenerationFingerprints),
 	};
 }
 
@@ -415,4 +432,86 @@ function readNumber(value: unknown): number {
 
 function isObject(value: unknown): value is Record<string, any> {
 	return typeof value === "object" && value !== null;
+}
+
+function createEmptyDocumentMetadata(): PersistedDocumentMetadata {
+	return {
+		topics: null,
+		topicPlan: null,
+		generationMeta: null,
+	};
+}
+
+function extractPersistedMetadataFrontmatter(content: string | undefined): Record<string, unknown> | null {
+	if (!content) {
+		return null;
+	}
+
+	const frontmatterEnd = findFrontmatterEnd(content);
+	if (frontmatterEnd === 0) {
+		return null;
+	}
+
+	const frontmatterBlock = content.slice(0, frontmatterEnd);
+	const values: Record<string, unknown> = {};
+
+	for (const key of [
+		OBCD_TOPICS_FRONTMATTER_KEY,
+		OBCD_TOPIC_PLAN_FRONTMATTER_KEY,
+		OBCD_GENERATION_META_FRONTMATTER_KEY,
+	]) {
+		const extractedValue = extractFrontmatterScalar(frontmatterBlock, key);
+		if (extractedValue !== null) {
+			values[key] = extractedValue;
+		}
+	}
+
+	return Object.keys(values).length > 0 ? values : null;
+}
+
+function extractFrontmatterScalar(frontmatterBlock: string, key: string): string | null {
+	const pattern = new RegExp(`(?:^|\\r?\\n)${escapeRegExp(key)}\\s*:\\s*(.+)(?=\\r?\\n|$)`);
+	const match = frontmatterBlock.match(pattern);
+	const rawValue = match?.[1]?.trim();
+	if (!rawValue) {
+		return null;
+	}
+
+	return unwrapYamlScalar(rawValue);
+}
+
+function unwrapYamlScalar(value: string): string {
+	if (
+		(value.startsWith("'") && value.endsWith("'"))
+		|| (value.startsWith("\"") && value.endsWith("\""))
+	) {
+		return value.slice(1, -1);
+	}
+
+	return value;
+}
+
+function normalizeCardGenerationFingerprints(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	const seenFingerprints = new Set<string>();
+	const fingerprints: string[] = [];
+
+	for (const rawValue of value) {
+		const fingerprint = readString(rawValue);
+		if (fingerprint.length === 0 || seenFingerprints.has(fingerprint)) {
+			continue;
+		}
+
+		seenFingerprints.add(fingerprint);
+		fingerprints.push(fingerprint);
+	}
+
+	return fingerprints;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

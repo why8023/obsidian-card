@@ -34,7 +34,9 @@ import type {
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { mapWithConcurrency } from "../utils/concurrency";
 import {
+	buildDocumentContentFingerprint,
 	buildCardCompositionFingerprint,
+	buildGenerationConfigFingerprint,
 	buildKnowledgeExtractionFingerprint,
 	buildTopicGroupingFingerprint,
 	buildTopicPlanFingerprint,
@@ -222,8 +224,6 @@ export class FlashcardWorkflow {
 		debugRun.recordChunks(chunks);
 
 		try {
-			this.assertAiConfigured();
-
 			if (chunks.length === 0) {
 				await this.writeArtifacts(file, [], [], [], mode, null, debugRun);
 				this.updateGenerationProgress(file, mode, progressContext, {
@@ -242,8 +242,11 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
+			const content = await this.loadFileContent(file);
+			const persistedMetadata = readDocumentMetadata(this.plugin.app, file, content);
 			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
 			const generatedAt = new Date().toISOString();
+			const activeProvider = getActiveProvider(this.plugin.settings);
 			const extractionSystemPrompt = buildKnowledgeExtractionPrompt(
 				this.plugin.settings.prompts.knowledgeExtractionPrompt,
 				resolvedPrompt.prompt,
@@ -253,11 +256,68 @@ export class FlashcardWorkflow {
 				this.plugin.settings.generation.temperature,
 				extractionSystemPrompt,
 			);
+			const documentFingerprint = buildDocumentContentFingerprint(chunks);
+			const configFingerprint = buildGenerationConfigFingerprint({
+				providerPresetType: activeProvider.presetType,
+				model: this.plugin.settings.generation.model,
+				temperature: this.plugin.settings.generation.temperature,
+				resolvedPrompt: resolvedPrompt.prompt,
+				knowledgeExtractionPrompt: this.plugin.settings.prompts.knowledgeExtractionPrompt,
+				globalRankingPrompt: this.plugin.settings.prompts.globalRankingPrompt,
+				cardCompositionPrompt: this.plugin.settings.prompts.cardCompositionPrompt,
+				coreCardBudget: this.plugin.settings.generation.coreCardBudget,
+				secondaryCardBudget: this.plugin.settings.generation.secondaryCardBudget,
+				maxTotalCardsPerDocument: this.plugin.settings.generation.maxTotalCardsPerDocument,
+				maxCardsPerTopic: this.plugin.settings.generation.maxCardsPerTopic,
+			});
+
+			if (this.canReuseExistingGenerationBeforeAnalysis({
+				file,
+				content,
+				mode,
+				chunks,
+				extractFingerprint,
+				documentFingerprint,
+				configFingerprint,
+				persistedMetadata,
+			})) {
+				debugRun.log("up-to-date:early", "Skipped chunk analysis because the note body, generation config, and existing plugin cards are unchanged.", {
+					documentFingerprint,
+					configFingerprint,
+					insertedCardCount: persistedMetadata.generationMeta?.insertedCardCount ?? null,
+				});
+				this.updateGenerationProgress(file, mode, progressContext, {
+					phase: "writing",
+					currentChunkIndex: 0,
+					totalChunks: Math.max(chunks.length, 1),
+					fileProgress: 1,
+					detail: "No content or generation changes were detected. Skipping chunk analysis and keeping the existing flashcards.",
+				});
+				if (mode !== "folder-file") {
+					await this.plugin.sidebar.refreshFromVault(file);
+				}
+				new Notice(`No content or generation changes were detected in ${file.basename}. Existing flashcards were kept.`);
+				const result = {
+					action: "confirm",
+					insertedCount: 0,
+				} satisfies FileProcessResult;
+				await debugRun.finish("up-to-date", {
+					documentFingerprint,
+					configFingerprint,
+					fingerprints: persistedMetadata.generationMeta?.fingerprints ?? {
+						extract: extractFingerprint,
+						group: "",
+						plan: "",
+					},
+				});
+				return result;
+			}
+
+			this.assertAiConfigured();
 			this.assertScopeWithinTaskLimits(chunks, extractFingerprint);
 			const analysisResults = await this.analyzeChunks(chunks, resolvedPrompt.prompt, extractFingerprint, debugRun, file, mode, progressContext);
 			const chunkAnalyses = analysisResults.map((result) => result.analysis);
 			const knowledgeAnalyses = chunkAnalyses.filter(isKnowledgeBearingAnalysis);
-			const persistedMetadata = readDocumentMetadata(this.plugin.app, file);
 
 			if (knowledgeAnalyses.length === 0) {
 				const documentMetadata = this.buildDocumentMetadataRequest({
@@ -267,10 +327,13 @@ export class FlashcardWorkflow {
 					extractFingerprint,
 					groupFingerprint: "",
 					planFingerprint: "",
+					documentFingerprint,
+					configFingerprint,
 					knowledgeChunkCount: 0,
 					topics: [],
 					budgetPlan: null,
 					remainingLlmCalls: null,
+					cardGenerationFingerprints: [],
 				});
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "extracting",
@@ -323,10 +386,13 @@ export class FlashcardWorkflow {
 					extractFingerprint,
 					groupFingerprint: groupingFingerprint,
 					planFingerprint: "",
+					documentFingerprint,
+					configFingerprint,
 					knowledgeChunkCount: knowledgeAnalyses.length,
 					topics,
 					budgetPlan: null,
 					remainingLlmCalls: null,
+					cardGenerationFingerprints: [],
 				});
 				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no distinct knowledge topics were found.`);
@@ -357,6 +423,7 @@ export class FlashcardWorkflow {
 			if (await this.isGenerationUpToDate({
 				file,
 				mode,
+				content,
 				chunks,
 				chunkAnalyses,
 				topics,
@@ -401,10 +468,13 @@ export class FlashcardWorkflow {
 					extractFingerprint,
 					groupFingerprint: groupingFingerprint,
 					planFingerprint,
+					documentFingerprint,
+					configFingerprint,
 					knowledgeChunkCount: knowledgeAnalyses.length,
 					topics,
 					budgetPlan,
 					remainingLlmCalls,
+					cardGenerationFingerprints: [],
 				});
 				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no topics justified card generation.`);
@@ -436,10 +506,13 @@ export class FlashcardWorkflow {
 					extractFingerprint,
 					groupFingerprint: groupingFingerprint,
 					planFingerprint,
+					documentFingerprint,
+					configFingerprint,
 					knowledgeChunkCount: knowledgeAnalyses.length,
 					topics,
 					budgetPlan,
 					remainingLlmCalls,
+					cardGenerationFingerprints: [],
 				});
 				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no valid cards were composed.`);
@@ -465,10 +538,13 @@ export class FlashcardWorkflow {
 				extractFingerprint,
 				groupFingerprint: groupingFingerprint,
 				planFingerprint,
+				documentFingerprint,
+				configFingerprint,
 				knowledgeChunkCount: knowledgeAnalyses.length,
 				topics,
 				budgetPlan,
 				remainingLlmCalls,
+				cardGenerationFingerprints: this.collectCardGenerationFingerprints(composedGroups),
 			});
 			const insertedCount = await this.writeArtifacts(file, chunks, chunkAnalyses, composedGroups, mode, documentMetadata, debugRun);
 			debugRun.recordWrite({
@@ -798,9 +874,68 @@ export class FlashcardWorkflow {
 		return clonedBudgetPlan;
 	}
 
-	private async isGenerationUpToDate(options: {
+	private canReuseExistingGenerationBeforeAnalysis(options: {
 		file: TFile;
+		content: string;
 		mode: GenerationMode;
+		chunks: ContentChunk[];
+		extractFingerprint: string;
+		documentFingerprint: string;
+		configFingerprint: string;
+		persistedMetadata: PersistedDocumentMetadata;
+	}): boolean {
+		const generationMeta = options.persistedMetadata.generationMeta;
+		if (!generationMeta) {
+			return false;
+		}
+
+		if (
+			generationMeta.fingerprints.extract !== options.extractFingerprint
+			|| generationMeta.documentFingerprint !== options.documentFingerprint
+			|| generationMeta.configFingerprint !== options.configFingerprint
+		) {
+			return false;
+		}
+
+		if (options.chunks.some((chunk) => !hasReusableChunkAnalysis(chunk, options.extractFingerprint))) {
+			return false;
+		}
+
+		const existingCards = this.collectScopedPluginGeneratedCards(
+			options.file,
+			options.content,
+			options.mode,
+			options.chunks,
+		);
+		if (generationMeta.insertedCardCount === 0) {
+			return existingCards.length === 0;
+		}
+
+		if (existingCards.length === 0) {
+			return false;
+		}
+
+		const expectedFingerprints = new Set(generationMeta.cardGenerationFingerprints);
+		if (expectedFingerprints.size === 0) {
+			return false;
+		}
+
+		const hasUnexpectedCards = existingCards.some((card) => (
+			!card.generationFingerprint || !expectedFingerprints.has(card.generationFingerprint)
+		));
+		if (hasUnexpectedCards) {
+			return false;
+		}
+
+		return generationMeta.insertedCardCount === null
+			? true
+			: existingCards.length === generationMeta.insertedCardCount;
+	}
+
+	private async isGenerationUpToDate(options: {
+		mode: GenerationMode;
+		file: TFile;
+		content: string;
 		chunks: ContentChunk[];
 		chunkAnalyses: KnowledgeChunkAnalysis[];
 		topics: KnowledgeTopic[];
@@ -824,10 +959,9 @@ export class FlashcardWorkflow {
 			return false;
 		}
 
-		const content = await this.loadFileContent(options.file);
 		const existingCards = this.collectScopedPluginGeneratedCards(
 			options.file,
-			content,
+			options.content,
 			options.mode,
 			options.chunks,
 		);
@@ -956,6 +1090,20 @@ export class FlashcardWorkflow {
 		}
 
 		return fingerprints;
+	}
+
+	private collectCardGenerationFingerprints(groups: ApprovedCardGroup[]): string[] {
+		const fingerprints = new Set<string>();
+
+		for (const group of groups) {
+			for (const card of group.cards) {
+				if (card.generationFingerprint?.trim()) {
+					fingerprints.add(card.generationFingerprint.trim());
+				}
+			}
+		}
+
+		return Array.from(fingerprints);
 	}
 
 	private resolveNextChunkStart(chunks: ContentChunk[], index: number): number {
@@ -1124,10 +1272,13 @@ export class FlashcardWorkflow {
 		extractFingerprint: string;
 		groupFingerprint: string;
 		planFingerprint: string;
+		documentFingerprint: string;
+		configFingerprint: string;
 		knowledgeChunkCount: number;
 		topics: KnowledgeTopic[];
 		budgetPlan: BudgetPlan | null;
 		remainingLlmCalls: number | null;
+		cardGenerationFingerprints: string[];
 	}): DocumentMetadataWriteRequest {
 		const activeProvider = getActiveProvider(this.plugin.settings);
 		return {
@@ -1144,10 +1295,13 @@ export class FlashcardWorkflow {
 			extractFingerprint: options.extractFingerprint,
 			groupFingerprint: options.groupFingerprint,
 			planFingerprint: options.planFingerprint,
+			documentFingerprint: options.documentFingerprint,
+			configFingerprint: options.configFingerprint,
 			knowledgeChunkCount: options.knowledgeChunkCount,
 			topics: options.topics,
 			budgetPlan: options.budgetPlan,
 			remainingLlmCalls: options.remainingLlmCalls,
+			cardGenerationFingerprints: options.cardGenerationFingerprints,
 		};
 	}
 

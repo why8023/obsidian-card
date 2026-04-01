@@ -1,5 +1,5 @@
 import type { FlashcardGenerationSettings } from "../settings";
-import type { BudgetPlan, CompositionRequest, KnowledgeChunkAnalysis, KnowledgeTopic } from "../types";
+import type { BudgetPlan, CompositionRequest, ContentChunk, KnowledgeChunkAnalysis, KnowledgeTopic } from "../types";
 import { hashContent } from "./markdown";
 
 const FINGERPRINT_SCHEMA_VERSION = 1;
@@ -104,6 +104,32 @@ export function buildCardCompositionFingerprint(
 			text: chunk.text,
 		})),
 	});
+}
+
+export function buildDocumentContentFingerprint(chunks: ContentChunk[]): string {
+	return buildStageFingerprint("document", {
+		chunks: chunks.map((chunk) => ({
+			chunkId: chunk.chunkId,
+			kind: chunk.kind,
+			sourceHash: chunk.sourceHash,
+		})),
+	});
+}
+
+export function buildGenerationConfigFingerprint(options: {
+	providerPresetType: string;
+	model: string;
+	temperature: number;
+	resolvedPrompt: string;
+	knowledgeExtractionPrompt: string;
+	globalRankingPrompt: string;
+	cardCompositionPrompt: string;
+	coreCardBudget: number;
+	secondaryCardBudget: number;
+	maxTotalCardsPerDocument: number;
+	maxCardsPerTopic: number;
+}): string {
+	return buildStageFingerprint("config", options);
 }
 
 function buildStageFingerprint(stage: string, payload: unknown): string {
