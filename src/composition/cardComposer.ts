@@ -4,6 +4,7 @@ import { LlmClient } from "../generation/llmClient";
 import { buildCardCompositionPrompt } from "../prompts/promptDefaults";
 import type { ObcdSettings } from "../settings";
 import type { CompositionRequest, GeneratedBasicCard, TopicCompositionResult } from "../types";
+import { buildCardCompositionFingerprint } from "../utils/generationFingerprints";
 import { collapseWhitespace } from "../utils/markdown";
 
 export class CardComposer {
@@ -18,12 +19,13 @@ export class CardComposer {
 	}
 
 	async compose(request: CompositionRequest, topicIndex: number): Promise<TopicCompositionResult> {
+		const systemPrompt = buildCardCompositionPrompt({
+			cardCount: request.cardCount,
+		}, this.settings.prompts.cardCompositionPrompt, this.customInstruction);
 		const payload = await this.llmClient.requestJson(`compose:${topicIndex}`, [
 			{
 				role: "system",
-				content: buildCardCompositionPrompt({
-					cardCount: request.cardCount,
-				}, this.settings.prompts.cardCompositionPrompt, this.customInstruction),
+				content: systemPrompt,
 			},
 			{
 				role: "user",
@@ -50,10 +52,26 @@ export class CardComposer {
 			},
 		]);
 
+		const sourceChunkIds = request.chunks.map((chunk) => chunk.chunkId);
+		const generationFingerprint = buildCardCompositionFingerprint(
+			this.settings.generation.model,
+			this.settings.generation.temperature,
+			systemPrompt,
+			request,
+		);
 		const cards = validateGeneratedCards(
 			normalizeCards(payload).slice(0, request.cardCount),
 			request.topic,
-		).slice(0, request.cardCount);
+		)
+			.slice(0, request.cardCount)
+			.map((card) => ({
+				front: card.front,
+				back: card.back,
+				tags: [...card.tags],
+				topicId: request.topic.topicId,
+				sourceChunkIds: [...sourceChunkIds],
+				generationFingerprint,
+			}));
 		this.debugRun?.log("compose:cards", `Composed ${cards.length} validated card(s) for topic ${request.topic.topicId}.`, {
 			topicId: request.topic.topicId,
 			cardCount: cards.length,
@@ -65,7 +83,7 @@ export class CardComposer {
 			cards,
 			source: {
 				topicId: request.topic.topicId,
-				chunkIds: request.chunks.map((chunk) => chunk.chunkId),
+				chunkIds: sourceChunkIds,
 			},
 		};
 	}

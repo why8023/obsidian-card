@@ -12,6 +12,9 @@ const CARD_END_PREFIX = "<!-- card-end";
 interface ParsedCardStartAttributes {
 	type: string;
 	tags: string[];
+	topicId: string;
+	sourceChunkIds: string[];
+	generationFingerprint: string;
 }
 
 interface ParsedCardBlock {
@@ -48,6 +51,11 @@ export function collectExistingCardEntries(file: TFile, content: string): Existi
 			type: parsedCard.attributes.type,
 			isPluginGenerated,
 			targetLabel: isPluginGenerated ? "Plugin" : "Other",
+			topicId: parsedCard.attributes.topicId || undefined,
+			sourceChunkIds: parsedCard.attributes.sourceChunkIds.length > 0
+				? [...parsedCard.attributes.sourceChunkIds]
+				: undefined,
+			generationFingerprint: parsedCard.attributes.generationFingerprint || undefined,
 		});
 	}
 
@@ -95,6 +103,9 @@ function parseCardStartAttributes(comment: string): ParsedCardStartAttributes {
 	const result: ParsedCardStartAttributes = {
 		type: "",
 		tags: [],
+		topicId: "",
+		sourceChunkIds: [],
+		generationFingerprint: "",
 	};
 
 	if (!comment.startsWith(CARD_START_PREFIX)) {
@@ -114,6 +125,15 @@ function parseCardStartAttributes(comment: string): ParsedCardStartAttributes {
 				.split(",")
 				.map((tag) => tag.trim())
 				.filter((tag) => tag.length > 0);
+		} else if (attributeName === "topic-id") {
+			result.topicId = attributeValue.trim();
+		} else if (attributeName === "source-chunk-ids") {
+			result.sourceChunkIds = attributeValue
+				.split(",")
+				.map((chunkId) => chunkId.trim())
+				.filter((chunkId) => chunkId.length > 0);
+		} else if (attributeName === "generation-fingerprint") {
+			result.generationFingerprint = attributeValue.trim();
 		}
 
 		match = attributePattern.exec(comment);

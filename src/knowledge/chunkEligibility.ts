@@ -9,12 +9,21 @@ interface ChunkExtractionResponse {
 	rejectionReason?: unknown;
 }
 
-export function hasReusableChunkAnalysis(chunk: ContentChunk): boolean {
-	return chunk.existingAnnotation?.data.hash === chunk.sourceHash;
+export function hasReusableChunkAnalysis(chunk: ContentChunk, expectedExtractFingerprint?: string): boolean {
+	if (chunk.existingAnnotation?.data.hash !== chunk.sourceHash) {
+		return false;
+	}
+
+	if (!expectedExtractFingerprint) {
+		return true;
+	}
+
+	const cachedFingerprint = chunk.existingAnnotation.data.extractFingerprint.trim();
+	return cachedFingerprint.length === 0 || cachedFingerprint === expectedExtractFingerprint;
 }
 
-export function hydrateChunkAnalysisFromAnnotation(chunk: ContentChunk): KnowledgeChunkAnalysis | null {
-	if (!hasReusableChunkAnalysis(chunk)) {
+export function hydrateChunkAnalysisFromAnnotation(chunk: ContentChunk, expectedExtractFingerprint?: string): KnowledgeChunkAnalysis | null {
+	if (!hasReusableChunkAnalysis(chunk, expectedExtractFingerprint)) {
 		return null;
 	}
 
@@ -30,14 +39,27 @@ export function hydrateChunkAnalysisFromAnnotation(chunk: ContentChunk): Knowled
 		status: cached.status,
 		summary: cached.summary,
 		topicHint: cached.topicHint,
-		evidenceExcerpt: cached.status === "knowledge" ? fallbackEvidenceExcerpt(chunk.text) : "",
+		evidenceExcerpt: cached.status === "knowledge"
+			? readPreferredText(
+				cached.evidenceExcerpt,
+				"",
+				fallbackEvidenceExcerpt(chunk.text),
+			)
+			: "",
 		rejectionReason: cached.rejectionReason,
+		extractFingerprint: cached.extractFingerprint || expectedExtractFingerprint || "",
+		extractedAt: cached.extractedAt,
 	};
 }
 
-export function normalizeChunkAnalysisPayload(payload: unknown, chunk: ContentChunk): KnowledgeChunkAnalysis {
+export function normalizeChunkAnalysisPayload(
+	payload: unknown,
+	chunk: ContentChunk,
+	extractFingerprint: string,
+	extractedAt: string,
+): KnowledgeChunkAnalysis {
 	const response = isObject(payload) ? payload as ChunkExtractionResponse : {};
-	const cached = hasReusableChunkAnalysis(chunk) ? chunk.existingAnnotation?.data : undefined;
+	const cached = chunk.existingAnnotation?.data;
 	const inferredKnowledge = inferKnowledgeStatus(response, cached?.status);
 	const summary = readPreferredText(
 		response.summary,
@@ -54,7 +76,7 @@ export function normalizeChunkAnalysisPayload(payload: unknown, chunk: ContentCh
 	const evidenceExcerpt = inferredKnowledge
 		? readPreferredText(
 			response.evidenceExcerpt,
-			"",
+			cached?.evidenceExcerpt ?? "",
 			fallbackEvidenceExcerpt(chunk.text),
 		)
 		: "";
@@ -75,6 +97,8 @@ export function normalizeChunkAnalysisPayload(payload: unknown, chunk: ContentCh
 		topicHint,
 		evidenceExcerpt,
 		rejectionReason,
+		extractFingerprint,
+		extractedAt,
 	};
 }
 

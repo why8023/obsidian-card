@@ -5,7 +5,7 @@ export type ContentChunkKind = "selection" | "paragraph-group";
 export type ChunkKnowledgeStatus = "knowledge" | "no-knowledge";
 export type TopicTier = "core" | "secondary";
 export const GENERATED_CARD_TYPE = "obcd";
-export const KNOWLEDGE_ANNOTATION_VERSION = 2;
+export const KNOWLEDGE_ANNOTATION_VERSION = 3;
 export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind"] as const;
 export type SidebarTableColumnId = (typeof SIDEBAR_TABLE_COLUMN_IDS)[number];
 
@@ -28,7 +28,10 @@ export interface KnowledgeAnnotationData {
 	status: ChunkKnowledgeStatus;
 	summary: string;
 	topicHint: string;
+	evidenceExcerpt: string;
 	rejectionReason: string;
+	extractFingerprint: string;
+	extractedAt: string;
 }
 
 export interface ExistingKnowledgeAnnotation {
@@ -56,6 +59,9 @@ export interface GeneratedBasicCard {
 	front: string;
 	back: string;
 	tags: string[];
+	topicId?: string;
+	sourceChunkIds?: string[];
+	generationFingerprint?: string;
 }
 
 export interface KnowledgeChunkAnalysis {
@@ -67,6 +73,8 @@ export interface KnowledgeChunkAnalysis {
 	topicHint: string;
 	evidenceExcerpt: string;
 	rejectionReason: string;
+	extractFingerprint: string;
+	extractedAt: string;
 }
 
 export interface ChunkAnalysisResult {
@@ -166,6 +174,9 @@ export interface ExistingCardEntry {
 	type: string;
 	isPluginGenerated: boolean;
 	targetLabel: string;
+	topicId?: string;
+	sourceChunkIds?: string[];
+	generationFingerprint?: string;
 }
 
 export type GenerationProgressPhase =

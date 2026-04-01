@@ -159,6 +159,15 @@ export function renderBasicCard(card: GeneratedBasicCard, newline = "\n"): strin
 	if (tags.length > 0) {
 		attributes.push(`tags="${tags.join(",")}"`);
 	}
+	if (card.topicId?.trim()) {
+		attributes.push(`topic-id="${sanitizeAttributeValue(card.topicId)}"`);
+	}
+	if ((card.sourceChunkIds?.length ?? 0) > 0) {
+		attributes.push(`source-chunk-ids="${card.sourceChunkIds!.map((chunkId) => sanitizeAttributeValue(chunkId)).join(",")}"`);
+	}
+	if (card.generationFingerprint?.trim()) {
+		attributes.push(`generation-fingerprint="${sanitizeAttributeValue(card.generationFingerprint)}"`);
+	}
 
 	return [
 		`<!-- card-start ${attributes.join(" ")} -->`,
@@ -302,7 +311,10 @@ function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis
 			status: analysis.status,
 			summary: analysis.summary,
 			topicHint: analysis.topicHint,
+			evidenceExcerpt: analysis.evidenceExcerpt,
 			rejectionReason: analysis.rejectionReason,
+			extractFingerprint: analysis.extractFingerprint,
+			extractedAt: analysis.extractedAt,
 		}),
 		normalizedBody,
 		renderKnowledgeAnnotationEnd(),
@@ -360,6 +372,10 @@ function sanitizeTags(tags: string[]): string[] {
 	}
 
 	return results;
+}
+
+function sanitizeAttributeValue(value: string): string {
+	return value.replace(/"/g, "").trim();
 }
 
 function removeExistingCardsFromContent(

@@ -11,7 +11,8 @@ import { allocateCardBudget } from "../knowledge/budgetAllocator";
 import { hasReusableChunkAnalysis, isKnowledgeBearingAnalysis } from "../knowledge/chunkEligibility";
 import { GlobalRanker } from "../knowledge/globalRanker";
 import { KnowledgeExtractor } from "../knowledge/knowledgeExtractor";
-import { resolveGenerationPrompt } from "../prompts/promptResolver";
+import { buildGlobalRankingPrompt, buildKnowledgeExtractionPrompt } from "../prompts/promptDefaults";
+import { resolveGenerationPrompt, type ResolvedGenerationPrompt } from "../prompts/promptResolver";
 import { PROVIDER_PRESET_INFO, getActiveProvider } from "../providerConfig";
 import { DEFAULT_GENERATED_CARD_TAG } from "../settings";
 import type {
@@ -31,7 +32,13 @@ import type {
 	TopicCompositionResult,
 } from "../types";
 import { mapWithConcurrency } from "../utils/concurrency";
+import {
+	buildKnowledgeExtractionFingerprint,
+	buildTopicGroupingFingerprint,
+	buildTopicPlanFingerprint,
+} from "../utils/generationFingerprints";
 import { writeApprovedCardGroups, type CardRegenerationOptions } from "../writing/flashcardWriter";
+import { writeDocumentMetadata, type DocumentMetadataWriteRequest } from "../writing/documentMetadataWriter";
 
 interface FileProcessResult {
 	action: ReviewAction;
@@ -208,7 +215,7 @@ export class FlashcardWorkflow {
 			this.assertAiConfigured();
 
 			if (chunks.length === 0) {
-				await this.writeArtifacts(file, [], [], [], mode);
+				await this.writeArtifacts(file, [], [], [], mode, null, debugRun);
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "preparing",
 					currentChunkIndex: 0,
@@ -225,13 +232,35 @@ export class FlashcardWorkflow {
 				return result;
 			}
 
-			this.assertScopeWithinTaskLimits(chunks);
 			const resolvedPrompt = await resolveGenerationPrompt(this.plugin.app, this.plugin.settings.prompts, file);
-			const analysisResults = await this.analyzeChunks(chunks, resolvedPrompt.prompt, debugRun, file, mode, progressContext);
+			const generatedAt = new Date().toISOString();
+			const extractionSystemPrompt = buildKnowledgeExtractionPrompt(
+				this.plugin.settings.prompts.knowledgeExtractionPrompt,
+				resolvedPrompt.prompt,
+			);
+			const extractFingerprint = buildKnowledgeExtractionFingerprint(
+				this.plugin.settings.generation.model,
+				this.plugin.settings.generation.temperature,
+				extractionSystemPrompt,
+			);
+			this.assertScopeWithinTaskLimits(chunks, extractFingerprint);
+			const analysisResults = await this.analyzeChunks(chunks, resolvedPrompt.prompt, extractFingerprint, debugRun, file, mode, progressContext);
 			const chunkAnalyses = analysisResults.map((result) => result.analysis);
 			const knowledgeAnalyses = chunkAnalyses.filter(isKnowledgeBearingAnalysis);
 
 			if (knowledgeAnalyses.length === 0) {
+				const documentMetadata = this.buildDocumentMetadataRequest({
+					mode,
+					generatedAt,
+					resolvedPrompt,
+					extractFingerprint,
+					groupFingerprint: "",
+					planFingerprint: "",
+					knowledgeChunkCount: 0,
+					topics: [],
+					budgetPlan: null,
+					remainingLlmCalls: null,
+				});
 				this.updateGenerationProgress(file, mode, progressContext, {
 					phase: "extracting",
 					currentChunkIndex: chunks.length,
@@ -239,7 +268,7 @@ export class FlashcardWorkflow {
 					fileProgress: 1,
 					detail: "The scope did not contain any durable knowledge chunks worth carrying into topic grouping.",
 				});
-				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`No durable knowledge chunks were found in ${file.basename}.`);
 				const result = {
 					action: "confirm",
@@ -256,6 +285,18 @@ export class FlashcardWorkflow {
 				fileProgress: 0.62,
 				detail: `Grouping ${knowledgeAnalyses.length} knowledge-bearing chunk${knowledgeAnalyses.length === 1 ? "" : "s"} into distinct topics.`,
 			});
+			const groupingSystemPrompt = buildGlobalRankingPrompt({
+				coreCardBudget: this.plugin.settings.generation.coreCardBudget,
+				secondaryCardBudget: this.plugin.settings.generation.secondaryCardBudget,
+				maxTotalCardsPerDocument: this.plugin.settings.generation.maxTotalCardsPerDocument,
+				maxCardsPerTopic: this.plugin.settings.generation.maxCardsPerTopic,
+			}, this.plugin.settings.prompts.globalRankingPrompt, resolvedPrompt.prompt);
+			const groupingFingerprint = buildTopicGroupingFingerprint(
+				this.plugin.settings.generation.model,
+				this.plugin.settings.generation.temperature,
+				groupingSystemPrompt,
+				knowledgeAnalyses,
+			);
 			const topics = await new GlobalRanker(this.plugin.settings, resolvedPrompt.prompt, debugRun).rank(knowledgeAnalyses);
 			debugRun.log("topics", "Built chunk-group topics.", {
 				topicCount: topics.length,
@@ -263,7 +304,19 @@ export class FlashcardWorkflow {
 			});
 
 			if (topics.length === 0) {
-				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				const documentMetadata = this.buildDocumentMetadataRequest({
+					mode,
+					generatedAt,
+					resolvedPrompt,
+					extractFingerprint,
+					groupFingerprint: groupingFingerprint,
+					planFingerprint: "",
+					knowledgeChunkCount: knowledgeAnalyses.length,
+					topics,
+					budgetPlan: null,
+					remainingLlmCalls: null,
+				});
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no distinct knowledge topics were found.`);
 				const result = {
 					action: "confirm",
@@ -274,13 +327,30 @@ export class FlashcardWorkflow {
 			}
 
 			const remainingLlmCalls = this.plugin.settings.generation.maxTaskLlmCalls
-				- this.countPendingChunkExtractions(chunks)
+				- this.countPendingChunkExtractions(chunks, extractFingerprint)
 				- 1;
 			const budgetPlan = allocateCardBudget(topics, this.plugin.settings.generation, remainingLlmCalls);
+			const planFingerprint = buildTopicPlanFingerprint(
+				this.plugin.settings.generation,
+				topics,
+				remainingLlmCalls,
+			);
 			debugRun.log("budget", "Allocated card budget across grouped topics.", budgetPlan);
 
 			if (budgetPlan.selectedTopics.length === 0 || budgetPlan.totalPlannedCards === 0) {
-				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				const documentMetadata = this.buildDocumentMetadataRequest({
+					mode,
+					generatedAt,
+					resolvedPrompt,
+					extractFingerprint,
+					groupFingerprint: groupingFingerprint,
+					planFingerprint,
+					knowledgeChunkCount: knowledgeAnalyses.length,
+					topics,
+					budgetPlan,
+					remainingLlmCalls,
+				});
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no topics justified card generation.`);
 				const result = {
 					action: "confirm",
@@ -303,7 +373,19 @@ export class FlashcardWorkflow {
 			);
 
 			if (composedGroups.length === 0) {
-				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode);
+				const documentMetadata = this.buildDocumentMetadataRequest({
+					mode,
+					generatedAt,
+					resolvedPrompt,
+					extractFingerprint,
+					groupFingerprint: groupingFingerprint,
+					planFingerprint,
+					knowledgeChunkCount: knowledgeAnalyses.length,
+					topics,
+					budgetPlan,
+					remainingLlmCalls,
+				});
+				await this.writeArtifacts(file, chunks, chunkAnalyses, [], mode, documentMetadata, debugRun);
 				new Notice(`Chunk analysis was updated in ${file.basename}, but no valid cards were composed.`);
 				const result = {
 					action: "confirm",
@@ -320,7 +402,19 @@ export class FlashcardWorkflow {
 				fileProgress: 0.94,
 				detail: "Writing knowledge annotations and the final flashcards.",
 			});
-			const insertedCount = await this.writeArtifacts(file, chunks, chunkAnalyses, composedGroups, mode);
+			const documentMetadata = this.buildDocumentMetadataRequest({
+				mode,
+				generatedAt,
+				resolvedPrompt,
+				extractFingerprint,
+				groupFingerprint: groupingFingerprint,
+				planFingerprint,
+				knowledgeChunkCount: knowledgeAnalyses.length,
+				topics,
+				budgetPlan,
+				remainingLlmCalls,
+			});
+			const insertedCount = await this.writeArtifacts(file, chunks, chunkAnalyses, composedGroups, mode, documentMetadata, debugRun);
 			debugRun.recordWrite({
 				insertedCount,
 				approvedCount: composedGroups.reduce((sum, group) => sum + group.cards.length, 0),
@@ -360,6 +454,7 @@ export class FlashcardWorkflow {
 	private async analyzeChunks(
 		chunks: ContentChunk[],
 		customPrompt: string,
+		extractFingerprint: string,
 		debugRun: DebugRun,
 		file: TFile,
 		mode: GenerationMode,
@@ -376,7 +471,7 @@ export class FlashcardWorkflow {
 			return [];
 		}
 
-		const extractor = new KnowledgeExtractor(this.plugin.settings, customPrompt, debugRun);
+		const extractor = new KnowledgeExtractor(this.plugin.settings, customPrompt, extractFingerprint, debugRun);
 		const maxConcurrency = this.resolveLlmConcurrency(chunks.length);
 		const chunkErrors = new Array<string | null>(chunks.length).fill(null);
 		let completedChunks = 0;
@@ -530,6 +625,8 @@ export class FlashcardWorkflow {
 		chunkAnalyses: KnowledgeChunkAnalysis[],
 		groups: ApprovedCardGroup[],
 		mode: GenerationMode,
+		documentMetadata: DocumentMetadataWriteRequest | null,
+		debugRun: DebugRun,
 	): Promise<number> {
 		const insertedCount = await writeApprovedCardGroups(this.plugin.app.vault, file, groups, {
 			chunks,
@@ -537,6 +634,23 @@ export class FlashcardWorkflow {
 			obarCompatibility: this.plugin.settings.compatibility.obar,
 			regeneration: this.resolveRegenerationOptions(mode, chunks),
 		});
+		try {
+			if (documentMetadata) {
+				const didPersistDocumentMetadata = await writeDocumentMetadata(this.plugin.app, file, documentMetadata);
+				if (didPersistDocumentMetadata) {
+					debugRun.log("metadata:frontmatter", "Persisted document-level generation metadata to note frontmatter.", {
+						knowledgeChunkCount: documentMetadata.knowledgeChunkCount,
+						topicCount: documentMetadata.topics.length,
+						plannedCardCount: documentMetadata.budgetPlan?.totalPlannedCards ?? 0,
+					});
+				}
+			}
+		} catch (error) {
+			debugRun.log("metadata:frontmatter:error", "Failed to persist document-level metadata to note frontmatter.", {
+				error: this.getErrorMessage(error),
+			});
+			new Notice(`The note was updated in ${file.basename}, but generation metadata could not be saved.`);
+		}
 		if (mode !== "folder-file") {
 			await this.plugin.sidebar.refreshFromVault(file);
 		}
@@ -614,6 +728,9 @@ export class FlashcardWorkflow {
 				front: card.front,
 				back: card.back,
 				tags: [...card.tags],
+				topicId: card.topicId,
+				sourceChunkIds: card.sourceChunkIds ? [...card.sourceChunkIds] : undefined,
+				generationFingerprint: card.generationFingerprint,
 			};
 		}
 
@@ -621,6 +738,9 @@ export class FlashcardWorkflow {
 			front: card.front,
 			back: card.back,
 			tags: this.appendConfiguredTag(card.tags),
+			topicId: card.topicId,
+			sourceChunkIds: card.sourceChunkIds ? [...card.sourceChunkIds] : undefined,
+			generationFingerprint: card.generationFingerprint,
 		};
 	}
 
@@ -660,10 +780,10 @@ export class FlashcardWorkflow {
 		}
 	}
 
-	private assertScopeWithinTaskLimits(chunks: ContentChunk[]): void {
+	private assertScopeWithinTaskLimits(chunks: ContentChunk[], extractFingerprint: string): void {
 		const characterCount = chunks.reduce((sum, chunk) => sum + chunk.text.length, 0);
 		const estimatedInputTokens = Math.ceil(characterCount / 4);
-		const estimatedLlmCalls = this.countPendingChunkExtractions(chunks)
+		const estimatedLlmCalls = this.countPendingChunkExtractions(chunks, extractFingerprint)
 			+ 1
 			+ Math.min(this.plugin.settings.generation.maxTotalCardsPerDocument, chunks.length);
 
@@ -680,8 +800,42 @@ export class FlashcardWorkflow {
 		}
 	}
 
-	private countPendingChunkExtractions(chunks: ContentChunk[]): number {
-		return chunks.filter((chunk) => !hasReusableChunkAnalysis(chunk)).length;
+	private countPendingChunkExtractions(chunks: ContentChunk[], extractFingerprint: string): number {
+		return chunks.filter((chunk) => !hasReusableChunkAnalysis(chunk, extractFingerprint)).length;
+	}
+
+	private buildDocumentMetadataRequest(options: {
+		mode: GenerationMode;
+		generatedAt: string;
+		resolvedPrompt: ResolvedGenerationPrompt;
+		extractFingerprint: string;
+		groupFingerprint: string;
+		planFingerprint: string;
+		knowledgeChunkCount: number;
+		topics: KnowledgeTopic[];
+		budgetPlan: BudgetPlan | null;
+		remainingLlmCalls: number | null;
+	}): DocumentMetadataWriteRequest {
+		const activeProvider = getActiveProvider(this.plugin.settings);
+		return {
+			mode: options.mode,
+			generatedAt: options.generatedAt,
+			providerPresetType: activeProvider.presetType,
+			model: this.plugin.settings.generation.model,
+			temperature: this.plugin.settings.generation.temperature,
+			resolvedPrompt: {
+				source: options.resolvedPrompt.source,
+				noteFolder: options.resolvedPrompt.noteFolder,
+				templatePath: options.resolvedPrompt.templatePath,
+			},
+			extractFingerprint: options.extractFingerprint,
+			groupFingerprint: options.groupFingerprint,
+			planFingerprint: options.planFingerprint,
+			knowledgeChunkCount: options.knowledgeChunkCount,
+			topics: options.topics,
+			budgetPlan: options.budgetPlan,
+			remainingLlmCalls: options.remainingLlmCalls,
+		};
 	}
 
 	private async runSafely(task: () => Promise<void>): Promise<void> {

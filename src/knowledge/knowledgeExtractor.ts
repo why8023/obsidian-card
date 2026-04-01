@@ -15,13 +15,14 @@ export class KnowledgeExtractor {
 	constructor(
 		private readonly settings: ObcdSettings,
 		private readonly customInstruction: string,
+		private readonly extractFingerprint: string,
 		private readonly debugRun?: DebugRun,
 	) {
 		this.llmClient = new LlmClient(settings, debugRun);
 	}
 
 	async extract(chunk: ContentChunk, chunkIndex: number): Promise<ChunkAnalysisResult> {
-		const cachedAnalysis = hydrateChunkAnalysisFromAnnotation(chunk);
+		const cachedAnalysis = hydrateChunkAnalysisFromAnnotation(chunk, this.extractFingerprint);
 		if (cachedAnalysis !== null) {
 			this.debugRun?.log("extract:cache", "Reused cached chunk analysis.", {
 				chunkIndex,
@@ -50,14 +51,19 @@ export class KnowledgeExtractor {
 					chunkId: chunk.chunkId,
 					titleHint: chunk.titleHint ?? "",
 					text: chunk.text,
-					existingAnalysis: hasReusableChunkAnalysis(chunk)
+					existingAnalysis: hasReusableChunkAnalysis(chunk, this.extractFingerprint)
 						? chunk.existingAnnotation?.data
 						: undefined,
 				}),
 			},
 		]);
 
-		const analysis = normalizeChunkAnalysisPayload(payload, chunk);
+		const analysis = normalizeChunkAnalysisPayload(
+			payload,
+			chunk,
+			this.extractFingerprint,
+			new Date().toISOString(),
+		);
 		this.debugRun?.log("extract:analysis", "Analyzed one chunk for durable knowledge.", {
 			chunkIndex,
 			chunkId: chunk.chunkId,

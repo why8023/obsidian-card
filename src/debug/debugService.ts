@@ -415,6 +415,9 @@ function cloneCards(cards: GeneratedBasicCard[]): GeneratedBasicCard[] {
 		front: card.front,
 		back: card.back,
 		tags: [...card.tags],
+		topicId: card.topicId,
+		sourceChunkIds: card.sourceChunkIds ? [...card.sourceChunkIds] : undefined,
+		generationFingerprint: card.generationFingerprint,
 	}));
 }
 

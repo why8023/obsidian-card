@@ -53,7 +53,10 @@ export function renderKnowledgeAnnotationStart(data: KnowledgeAnnotationData): s
 		status: data.status,
 		summary: collapseWhitespace(data.summary),
 		topicHint: collapseWhitespace(data.topicHint),
+		evidenceExcerpt: collapseWhitespace(data.evidenceExcerpt),
 		rejectionReason: collapseWhitespace(data.rejectionReason),
+		extractFingerprint: data.extractFingerprint.trim(),
+		extractedAt: data.extractedAt.trim(),
 	});
 	return `${KNOWLEDGE_START_PREFIX} ${payload} -->`;
 }
@@ -85,7 +88,10 @@ function parseKnowledgeStartComment(comment: string): KnowledgeAnnotationData | 
 		const topicHint = typeof parsed.topicHint === "string"
 			? collapseWhitespace(parsed.topicHint)
 			: legacyGroup;
+		const evidenceExcerpt = typeof parsed.evidenceExcerpt === "string" ? collapseWhitespace(parsed.evidenceExcerpt) : "";
 		const rejectionReason = typeof parsed.rejectionReason === "string" ? collapseWhitespace(parsed.rejectionReason) : "";
+		const extractFingerprint = typeof parsed.extractFingerprint === "string" ? parsed.extractFingerprint.trim() : "";
+		const extractedAt = typeof parsed.extractedAt === "string" ? parsed.extractedAt.trim() : "";
 		const hash = typeof parsed.hash === "string" ? parsed.hash.trim() : "";
 		if (summary.length === 0 || hash.length === 0) {
 			return null;
@@ -97,7 +103,10 @@ function parseKnowledgeStartComment(comment: string): KnowledgeAnnotationData | 
 			status: parsed.status === "no-knowledge" ? "no-knowledge" : "knowledge",
 			summary,
 			topicHint,
+			evidenceExcerpt,
 			rejectionReason,
+			extractFingerprint,
+			extractedAt,
 		};
 	} catch {
 		return null;
