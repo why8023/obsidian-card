@@ -280,22 +280,26 @@ function renderChunkArtifacts(
 	analysis: KnowledgeChunkAnalysis | undefined,
 	cards: GeneratedBasicCard[],
 	newline: string,
-	wrapEachCardWithObar: boolean,
+	wrapPluginArtifactsWithObar: boolean,
 ): string {
 	const annotationBlock = analysis
-		? renderKnowledgeBlock(bodyText, analysis, newline)
+		? renderKnowledgeBlock(bodyText, analysis, newline, wrapPluginArtifactsWithObar)
 		: bodyText;
 	if (cards.length === 0) {
 		return annotationBlock;
 	}
 
-	return `${annotationBlock}${newline}${newline}${renderInsertedCards(cards, newline, wrapEachCardWithObar)}`;
+	return `${annotationBlock}${newline}${newline}${renderInsertedCards(cards, newline, wrapPluginArtifactsWithObar)}`;
 }
 
-function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis, newline: string): string {
+function renderKnowledgeBlock(
+	bodyText: string,
+	analysis: KnowledgeChunkAnalysis,
+	newline: string,
+	wrapWithObar: boolean,
+): string {
 	const normalizedBody = bodyText.endsWith(newline) ? bodyText.slice(0, -newline.length) : bodyText;
-
-	return [
+	const renderedBlock = [
 		renderKnowledgeAnnotationStart({
 			version: KNOWLEDGE_ANNOTATION_VERSION,
 			hash: analysis.hash,
@@ -310,6 +314,8 @@ function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis
 		normalizedBody,
 		renderKnowledgeAnnotationEnd(),
 	].join(newline);
+
+	return wrapWithObar ? renderObarWrappedBlock(renderedBlock, newline) : renderedBlock;
 }
 
 export function shouldRemoveEntryForRegeneration(blockRange: TextRange, regeneration: CardRegenerationOptions | undefined): boolean {

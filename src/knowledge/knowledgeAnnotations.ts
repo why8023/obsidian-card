@@ -1,3 +1,4 @@
+import { expandRangeToIncludeObarCustomNote } from "../obarCompatibility";
 import type { ExistingKnowledgeAnnotation, KnowledgeAnnotationData, TextRange } from "../types";
 import { KNOWLEDGE_ANNOTATION_VERSION } from "../types";
 import { collapseWhitespace } from "../utils/markdown";
@@ -43,11 +44,12 @@ export function collectKnowledgeAnnotations(content: string): ExistingKnowledgeA
 
 		const openAnnotation = openAnnotations.pop();
 		if (openAnnotation) {
+			const rawBlockRange = {
+				from: openAnnotation.start,
+				to: nextEnd + KNOWLEDGE_END_MARKER.length,
+			};
 			annotations.push({
-				blockRange: {
-					from: openAnnotation.start,
-					to: nextEnd + KNOWLEDGE_END_MARKER.length,
-				},
+				blockRange: expandRangeToIncludeObarCustomNote(content, rawBlockRange),
 				bodyRange: {
 					from: openAnnotation.bodyStart,
 					to: nextEnd,
@@ -86,6 +88,8 @@ export function renderKnowledgeAnnotationEnd(): string {
 
 export function stripKnowledgeAnnotationMarkers(value: string): string {
 	return value
+		.replace(/^\s*<!--\s*obar-note-start:[A-Za-z0-9-]+\s*-->\s*$/gm, "")
+		.replace(/^\s*<!--\s*obar-note-end:[A-Za-z0-9-]+\s*-->\s*$/gm, "")
 		.replace(/^\s*<!--\s*obcd-knowledge-start:[\s\S]*?-->\s*$/gm, "")
 		.replace(/^\s*<!--\s*obcd-knowledge-end\s*-->\s*$/gm, "")
 		.trim();
