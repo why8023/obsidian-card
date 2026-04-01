@@ -83,7 +83,7 @@ export class LlmClient {
 			messages: [
 				{
 					role: "user" as const,
-					content: "Reply with OK.",
+					content: "请只回复 OK。",
 				},
 			],
 		};

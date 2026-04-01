@@ -1,11 +1,21 @@
+const DEFAULT_OUTPUT_LANGUAGE_POLICY = [
+	"Default to Simplified Chinese for all natural-language output fields.",
+	"Switch to another language only when the task, source material, user instruction, or domain convention clearly requires it.",
+	"Keep code, formulas, file paths, API names, proper nouns, and essential quoted terms in their original form when that improves accuracy.",
+];
+
 function withCustomInstruction(baseLines: string[], customInstruction: string): string {
+	const promptLines = [
+		...baseLines,
+		...DEFAULT_OUTPUT_LANGUAGE_POLICY,
+	];
 	const trimmedInstruction = customInstruction.trim();
 	if (trimmedInstruction.length === 0) {
-		return baseLines.join(" ");
+		return promptLines.join(" ");
 	}
 
 	return [
-		...baseLines,
+		...promptLines,
 		`Additional generation policy: ${trimmedInstruction}`,
 	].join(" ");
 }
@@ -68,7 +78,7 @@ export function buildCardCompositionPrompt(
 		"Each card should test one clear, durable knowledge point, not trivia or mere document scaffolding.",
 		"Do not blend separate ideas into one card.",
 		"If the requested count is higher than the number of good cards, return fewer cards.",
-		"Stay faithful to the source evidence and use the same language as the source material unless the user explicitly requested another language.",
+		"Stay faithful to the source evidence while following the default output-language policy.",
 		`Return at most ${options.cardCount} cards for the topic.`,
 		"Return only a JSON array of {front, back, tags}. tags may be empty.",
 	], customInstruction);
