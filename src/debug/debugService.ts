@@ -3,11 +3,9 @@ import { normalizePath } from "obsidian";
 import type ObcdPlugin from "../main";
 import { getActiveProvider, getProviderChatCompletionsUrl, getResolvedProviderBaseUrl } from "../providerConfig";
 import type {
-	CardCandidate,
 	ContentChunk,
 	GeneratedBasicCard,
 	GenerationMode,
-	ReviewResult,
 	TextRange,
 } from "../types";
 import { makePreview } from "../utils/markdown";
@@ -64,12 +62,6 @@ interface DebugChunkRecord {
 	error?: DebugErrorRecord;
 }
 
-interface DebugReviewRecord {
-	action: ReviewResult["action"];
-	approvedCount: number;
-	approvedCards: GeneratedBasicCard[];
-}
-
 interface DebugWriteRecord {
 	insertedCount: number;
 	approvedCount: number;
@@ -93,8 +85,6 @@ interface DebugArtifact {
 	generation: Record<string, unknown>;
 	events: DebugEvent[];
 	chunks: DebugChunkRecord[];
-	candidates?: CardCandidate[];
-	review?: DebugReviewRecord;
 	write?: DebugWriteRecord;
 	error?: DebugErrorRecord;
 }
@@ -106,8 +96,6 @@ export interface DebugRun {
 	recordChunkResponse(chunkIndex: number, response: DebugChunkResponse): void;
 	recordChunkCards(chunkIndex: number, cards: GeneratedBasicCard[]): void;
 	recordChunkError(chunkIndex: number, error: unknown, details?: unknown): void;
-	recordCandidates(candidates: CardCandidate[]): void;
-	recordReview(reviewResult: ReviewResult): void;
 	recordWrite(result: DebugWriteRecord): void;
 	recordError(stage: string, error: unknown, details?: unknown): void;
 	log(stage: string, message: string, details?: unknown): void;
@@ -238,35 +226,6 @@ class ActiveDebugRun implements DebugRun {
 		});
 	}
 
-	recordCandidates(candidates: CardCandidate[]): void {
-		this.artifact.candidates = candidates.map((candidate) => ({
-			...candidate,
-			card: {
-				front: candidate.card.front,
-				back: candidate.card.back,
-				tags: [...candidate.card.tags],
-			},
-		}));
-
-		this.log("candidates", `Built ${candidates.length} candidate(s).`, {
-			candidateCount: candidates.length,
-		});
-	}
-
-	recordReview(reviewResult: ReviewResult): void {
-		const approvedCards = flattenApprovedCards(reviewResult);
-		this.artifact.review = {
-			action: reviewResult.action,
-			approvedCount: approvedCards.length,
-			approvedCards,
-		};
-
-		this.log("review", `Review finished with action ${reviewResult.action}.`, {
-			action: reviewResult.action,
-			approvedCount: approvedCards.length,
-		});
-	}
-
 	recordWrite(result: DebugWriteRecord): void {
 		this.artifact.write = {
 			insertedCount: result.insertedCount,
@@ -365,8 +324,6 @@ class NoopDebugRun implements DebugRun {
 	recordChunkResponse(_chunkIndex: number, _response: DebugChunkResponse): void {}
 	recordChunkCards(_chunkIndex: number, _cards: GeneratedBasicCard[]): void {}
 	recordChunkError(_chunkIndex: number, _error: unknown, _details?: unknown): void {}
-	recordCandidates(_candidates: CardCandidate[]): void {}
-	recordReview(_reviewResult: ReviewResult): void {}
 	recordWrite(_result: DebugWriteRecord): void {}
 	recordError(_stage: string, _error: unknown, _details?: unknown): void {}
 	log(_stage: string, _message: string, _details?: unknown): void {}
@@ -419,10 +376,6 @@ function cloneCards(cards: GeneratedBasicCard[]): GeneratedBasicCard[] {
 		sourceChunkIds: card.sourceChunkIds ? [...card.sourceChunkIds] : undefined,
 		generationFingerprint: card.generationFingerprint,
 	}));
-}
-
-function flattenApprovedCards(reviewResult: ReviewResult): GeneratedBasicCard[] {
-	return cloneCards(reviewResult.approvedGroups.flatMap((group) => group.cards));
 }
 
 function sanitizeHeaders(headers: Record<string, string>): Record<string, string> {

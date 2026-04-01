@@ -61,7 +61,6 @@ export class CardComposer {
 		);
 		const cards = validateGeneratedCards(
 			normalizeCards(payload).slice(0, request.cardCount),
-			request.topic,
 		)
 			.slice(0, request.cardCount)
 			.map((card) => ({

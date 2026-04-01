@@ -1103,8 +1103,6 @@ export class CardSidebarView extends ItemView {
 
 	private getGenerationModeLabel(mode: NonNullable<SidebarAnalysisSnapshot["mode"]>): string {
 		switch (mode) {
-			case "cursor-file":
-				return "Up to cursor";
 			case "folder-file":
 				return "Folder run";
 			case "selection":

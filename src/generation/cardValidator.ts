@@ -1,54 +1,10 @@
-import type { CardCandidate, ChunkGenerationResult, GeneratedBasicCard, KnowledgeTopic, ReviewGroup } from "../types";
-import { collapseWhitespace, makePreview } from "../utils/markdown";
+import type { GeneratedBasicCard } from "../types";
+import { collapseWhitespace } from "../utils/markdown";
 
 const CONTEXT_DEPENDENT_PATTERN = /\b(this section|this chapter|the section above|the section below|above|below|here|the title|this heading|that heading)\b/i;
 const CONTEXT_DEPENDENT_PATTERN_ZH = /(本节|本章|上文|下文|前文|后文|这里|该节|该标题|这个标题)/;
 
-export function buildReviewGroups(results: ChunkGenerationResult[]): ReviewGroup[] {
-	const groups: ReviewGroup[] = [];
-	const seenKeys = new Set<string>();
-
-	for (const result of results) {
-		const candidates: CardCandidate[] = [];
-
-		for (const rawCard of result.cards) {
-			const normalizedCard = normalizeCard(rawCard);
-			if (normalizedCard === null) {
-				continue;
-			}
-
-			const dedupeKey = `${normalizedCard.front.toLowerCase()}::${normalizedCard.back.toLowerCase()}`;
-			if (seenKeys.has(dedupeKey)) {
-				continue;
-			}
-			seenKeys.add(dedupeKey);
-
-			candidates.push({
-				id: `${result.chunk.chunkId}-${candidates.length}`,
-				chunkId: result.chunk.chunkId,
-				filePath: result.chunk.filePath,
-				titleHint: result.chunk.titleHint,
-				sourcePreview: makePreview(result.chunk.text),
-				card: normalizedCard,
-				approved: true,
-			});
-		}
-
-		if (candidates.length === 0) {
-			continue;
-		}
-
-		groups.push({
-			chunk: result.chunk,
-			sourcePreview: makePreview(result.chunk.text),
-			candidates,
-		});
-	}
-
-	return groups;
-}
-
-export function validateGeneratedCards(cards: GeneratedBasicCard[], topic: KnowledgeTopic): GeneratedBasicCard[] {
+export function validateGeneratedCards(cards: GeneratedBasicCard[]): GeneratedBasicCard[] {
 	const acceptedCards: GeneratedBasicCard[] = [];
 	const seenKeys = new Set<string>();
 

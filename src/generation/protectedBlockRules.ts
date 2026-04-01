@@ -6,7 +6,7 @@ export interface ProtectedBlockRule {
 	endPattern: string;
 }
 
-interface PatternMatch extends TextRange {}
+type PatternMatch = TextRange;
 
 interface CompiledProtectedBlockRule {
 	name: string;

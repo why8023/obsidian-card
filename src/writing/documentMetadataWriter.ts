@@ -417,7 +417,7 @@ function parseJsonFrontmatterValue<T>(value: unknown): T | null {
 }
 
 function parseGenerationMode(value: unknown): GenerationMode {
-	return value === "selection" || value === "folder-file" || value === "cursor-file"
+	return value === "selection" || value === "folder-file"
 		? value
 		: "file";
 }
@@ -430,7 +430,7 @@ function readNumber(value: unknown): number {
 	return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function isObject(value: unknown): value is Record<string, any> {
+function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
@@ -575,10 +575,13 @@ function extractFrontmatterScalar(frontmatterBlock: string, key: string): string
 }
 
 function unwrapYamlScalar(value: string): string {
-	if (
-		(value.startsWith("'") && value.endsWith("'"))
-		|| (value.startsWith("\"") && value.endsWith("\""))
-	) {
+	if (value.startsWith("'") && value.endsWith("'")) {
+		return value
+			.slice(1, -1)
+			.replace(/''/g, "'");
+	}
+
+	if (value.startsWith("\"") && value.endsWith("\"")) {
 		return value.slice(1, -1);
 	}
 

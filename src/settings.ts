@@ -65,7 +65,6 @@ export interface ObcdDebugSettings {
 }
 
 export interface ObcdSidebarSettings {
-	frontPreviewLength: number;
 	visibleTableColumns: SidebarTableColumnId[];
 }
 
@@ -122,7 +121,6 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 };
 
 export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
-	frontPreviewLength: 72,
 	visibleTableColumns: ["target"],
 };
 
@@ -758,20 +756,6 @@ export class ObcdSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName("问题预览长度")
-			.setDesc("控制侧边栏表格中每条问题的最大显示字符数，范围 20 到 200。")
-			.addText((text) => text
-				.setPlaceholder(String(DEFAULT_SIDEBAR_SETTINGS.frontPreviewLength))
-				.setValue(String(this.plugin.settings.sidebar.frontPreviewLength))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue >= 20 && parsedValue <= 200) {
-						this.plugin.settings.sidebar.frontPreviewLength = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
 			.setName("兼容性")
 			.setDesc("配置与其他插件生成笔记的兼容行为。")
 			.setHeading();
@@ -1033,7 +1017,6 @@ function parseSidebarSettings(value: unknown, fallback: ObcdSidebarSettings): Ob
 	const sidebarSource = isRecord(value) ? value : {};
 
 	return {
-		frontPreviewLength: readNumber(sidebarSource.frontPreviewLength, fallback.frontPreviewLength, { min: 20, max: 200 }),
 		visibleTableColumns: readSidebarColumns(sidebarSource.visibleTableColumns, fallback.visibleTableColumns),
 	};
 }

@@ -6,7 +6,7 @@ import type { DebugRun } from "../debug/debugService";
 import type ObcdPlugin from "../main";
 import { CardComposer } from "../composition/cardComposer";
 import { buildFileChunks, buildSelectionChunks } from "../generation/contentChunkBuilder";
-import { listMarkdownFiles, resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
+import { listMarkdownFiles, resolveCurrentFileTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 import { allocateCardBudget } from "../knowledge/budgetAllocator";
 import { hasReusableChunkAnalysis, isKnowledgeBearingAnalysis } from "../knowledge/chunkEligibility";
 import { GlobalRanker } from "../knowledge/globalRanker";
@@ -107,29 +107,6 @@ export class FlashcardWorkflow {
 				totalFiles: 1,
 			} satisfies GenerationProgressContext;
 			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the current note.");
-			await this.processSingleFile(target.file, chunks, false, target.mode, progressContext);
-		});
-	}
-
-	async generateUpToCursor(editor: Editor, ctx: MarkdownFileInfo): Promise<void> {
-		await this.runSafely(async () => {
-			const target = resolveCursorTarget(editor, ctx);
-			if (target === null || target.cursorOffset === undefined) {
-				new Notice("Open a Markdown file before generating flashcards.");
-				return;
-			}
-
-			const fullContent = editor.getValue();
-			const chunks = buildFileChunks(target.file, fullContent, {
-				protectedBlockRules: this.plugin.settings.generation.protectedBlockRules,
-				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
-				upToOffset: target.cursorOffset,
-			});
-			const progressContext = {
-				currentFileIndex: 1,
-				totalFiles: 1,
-			} satisfies GenerationProgressContext;
-			await this.beginGenerationProgress(target.file, target.mode, progressContext, chunks.length, "Preparing the note content up to the cursor.");
 			await this.processSingleFile(target.file, chunks, false, target.mode, progressContext);
 		});
 	}

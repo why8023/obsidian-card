@@ -1,6 +1,6 @@
 import type { TFile } from "obsidian";
 
-export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
+export type GenerationMode = "selection" | "file" | "folder-file";
 export type ContentChunkKind = "selection" | "paragraph-group";
 export type ChunkKnowledgeStatus = "knowledge" | "no-knowledge";
 export type TopicTier = "core" | "secondary";
@@ -19,7 +19,6 @@ export interface GenerationTarget {
 	filePath: string;
 	mode: GenerationMode;
 	selectedRange?: TextRange;
-	cursorOffset?: number;
 }
 
 export interface KnowledgeAnnotationData {
@@ -128,27 +127,6 @@ export interface TopicCompositionResult {
 	source: CardDraftSource;
 }
 
-export interface ChunkGenerationResult {
-	chunk: ContentChunk;
-	cards: GeneratedBasicCard[];
-}
-
-export interface CardCandidate {
-	id: string;
-	chunkId: string;
-	filePath: string;
-	titleHint?: string;
-	sourcePreview: string;
-	card: GeneratedBasicCard;
-	approved: boolean;
-}
-
-export interface ReviewGroup {
-	chunk: ContentChunk;
-	sourcePreview: string;
-	candidates: CardCandidate[];
-}
-
 export interface ApprovedCardGroup {
 	chunk: ContentChunk;
 	analysis: KnowledgeChunkAnalysis;
@@ -156,11 +134,6 @@ export interface ApprovedCardGroup {
 }
 
 export type ReviewAction = "confirm" | "cancel" | "skip-file" | "stop-batch";
-
-export interface ReviewResult {
-	action: ReviewAction;
-	approvedGroups: ApprovedCardGroup[];
-}
 
 export interface ExistingCardEntry {
 	id: string;

@@ -1,5 +1,5 @@
 import type ObcdPlugin from "../main";
-import { resolveCurrentFileTarget, resolveCursorTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
+import { resolveCurrentFileTarget, resolveFolderTarget, resolveSelectionTarget } from "../generation/targetResolver";
 
 export function registerCommands(plugin: ObcdPlugin): void {
 	plugin.addCommand({
@@ -36,22 +36,6 @@ export function registerCommands(plugin: ObcdPlugin): void {
 
 			if (!checking) {
 				void plugin.workflow.generateForCurrentFile();
-			}
-
-			return true;
-		},
-	});
-
-	plugin.addCommand({
-		id: "generate-basic-flashcards-up-to-cursor",
-		name: "Generate basic flashcards up to cursor",
-		editorCheckCallback: (checking, editor, ctx) => {
-			if (resolveCursorTarget(editor, ctx) === null) {
-				return false;
-			}
-
-			if (!checking) {
-				void plugin.workflow.generateUpToCursor(editor, ctx);
 			}
 
 			return true;
