@@ -1,3 +1,5 @@
+import { extractSemanticMarkdownText } from "./markdownSemanticText";
+
 export interface HeadingInfo {
 	level: number;
 	title: string;
@@ -111,6 +113,15 @@ export function collapseWhitespace(value: string): string {
 }
 
 export function normalizeContentForHash(value: string): string {
+	const semanticText = extractSemanticMarkdownText(value);
+	if (semanticText.length > 0) {
+		return semanticText;
+	}
+
+	return normalizeContentForHashFallback(value);
+}
+
+function normalizeContentForHashFallback(value: string): string {
 	return value
 		.replace(/\r\n/g, "\n")
 		.replace(/[^\S\n]+/g, " ")

@@ -10,7 +10,13 @@ interface ChunkExtractionResponse {
 }
 
 export function hasReusableChunkAnalysis(chunk: ContentChunk, expectedExtractFingerprint?: string): boolean {
-	if (chunk.existingAnnotation?.data.hash !== chunk.sourceHash) {
+	const cachedAnnotation = chunk.existingAnnotation;
+	const cachedHash = cachedAnnotation?.data.hash;
+	if (!cachedHash) {
+		return false;
+	}
+
+	if (cachedHash !== chunk.sourceHash) {
 		return false;
 	}
 
@@ -18,7 +24,7 @@ export function hasReusableChunkAnalysis(chunk: ContentChunk, expectedExtractFin
 		return true;
 	}
 
-	const cachedFingerprint = chunk.existingAnnotation.data.extractFingerprint.trim();
+	const cachedFingerprint = cachedAnnotation.data.extractFingerprint.trim();
 	return cachedFingerprint.length === 0 || cachedFingerprint === expectedExtractFingerprint;
 }
 
