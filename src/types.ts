@@ -1,20 +1,11 @@
 import type { TFile } from "obsidian";
 
-export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file" | "section-file";
-export type ContentChunkKind = "selection" | "section";
-export type CardBlockKind = "selection" | "heading" | "preamble";
-export type GenerationStrategy = "direct-global" | "hierarchical-global" | "chapter-planning" | "refuse-or-scope";
-export type KnowledgeUnitKind =
-	| "core-concept"
-	| "key-conclusion"
-	| "supporting-detail"
-	| "background"
-	| "example"
-	| "process-detail"
-	| "ignore";
+export type GenerationMode = "selection" | "file" | "folder-file" | "cursor-file";
+export type ContentChunkKind = "selection" | "paragraph-group";
+export type ChunkKnowledgeStatus = "knowledge" | "no-knowledge";
 export type TopicTier = "core" | "secondary";
 export const GENERATED_CARD_TYPE = "obcd";
-export const KNOWLEDGE_ANNOTATION_VERSION = 1;
+export const KNOWLEDGE_ANNOTATION_VERSION = 2;
 export const SIDEBAR_TABLE_COLUMN_IDS = ["target", "tags", "kind"] as const;
 export type SidebarTableColumnId = (typeof SIDEBAR_TABLE_COLUMN_IDS)[number];
 
@@ -34,8 +25,10 @@ export interface GenerationTarget {
 export interface KnowledgeAnnotationData {
 	version: number;
 	hash: string;
+	status: ChunkKnowledgeStatus;
 	summary: string;
-	group: string;
+	topicHint: string;
+	rejectionReason: string;
 }
 
 export interface ExistingKnowledgeAnnotation {
@@ -48,14 +41,10 @@ export interface ContentChunk {
 	file: TFile;
 	filePath: string;
 	chunkId: string;
-	isKnowledgeCandidate: boolean;
 	text: string;
 	range: TextRange;
 	kind: ContentChunkKind;
-	blockKind: CardBlockKind;
-	sectionKey: string;
 	sourceHash: string;
-	headingPath: string[];
 	insertOffset: number;
 	bodyRange: TextRange;
 	titleHint?: string;
@@ -69,71 +58,33 @@ export interface GeneratedBasicCard {
 	tags: string[];
 }
 
-export interface ScopeEstimate {
-	characterCount: number;
-	chunkCount: number;
-	headingCount: number;
-	headingDepth: number;
-	estimatedInputTokens: number;
-	estimatedKnowledgeUnitCount: number;
-	estimatedLlmCalls: number;
-	isLikelyBookLikeDocument: boolean;
-	recommendedStrategy: GenerationStrategy;
-	reason: string;
-}
-
-export interface KnowledgeUnit {
-	id: string;
-	sourceUnitIds: string[];
-	filePath: string;
-	chunkId: string;
-	sectionKey: string;
-	headingPath: string[];
-	titleHint?: string;
-	chunkSummary: string;
-	groupLabel: string;
-	statement: string;
-	kind: KnowledgeUnitKind;
-	importanceLocal: number;
-	candidateQuestionIntent: string;
-	evidenceExcerpt: string;
-	sourceHash: string;
-	tokenEstimate: number;
-}
-
 export interface KnowledgeChunkAnalysis {
 	chunkId: string;
 	filePath: string;
-	sectionKey: string;
-	titleHint?: string;
-	headingPath: string[];
 	hash: string;
+	status: ChunkKnowledgeStatus;
 	summary: string;
-	group: string;
+	topicHint: string;
+	evidenceExcerpt: string;
+	rejectionReason: string;
 }
 
 export interface ChunkAnalysisResult {
 	chunk: ContentChunk;
 	analysis: KnowledgeChunkAnalysis;
-	units: KnowledgeUnit[];
-}
-
-export interface KnowledgeTopicEvidence {
-	unitId: string;
-	excerpt: string;
 }
 
 export interface KnowledgeTopic {
 	topicId: string;
 	canonicalStatement: string;
 	knowledgeGroup: string;
-	memberUnitIds: string[];
+	summary: string;
 	memberChunkIds: string[];
-	importanceGlobal: number;
-	coverageSections: string[];
+	importanceScore: number;
 	tier: TopicTier;
 	recommendedCardCount: number;
-	evidenceRefs: KnowledgeTopicEvidence[];
+	shouldCreateCards: boolean;
+	rejectionReason: string;
 }
 
 export interface TopicBudgetAllocation {
@@ -151,37 +102,16 @@ export interface BudgetPlan {
 	selectedTopics: TopicBudgetAllocation[];
 }
 
-export interface PlanningSection {
-	sectionKey: string;
-	title: string;
-	headingPath: string[];
-	range: TextRange;
-	chunkCount: number;
-	summary: string;
-	estimatedCardValueDensity: number;
-	recommended: boolean;
-}
-
-export interface PlanningResult {
-	strategy: Extract<GenerationStrategy, "chapter-planning" | "refuse-or-scope">;
-	reason: string;
-	estimate: ScopeEstimate;
-	sections: PlanningSection[];
-}
-
 export interface CardDraftSource {
 	topicId: string;
-	unitIds: string[];
 	chunkIds: string[];
-	strategy: GenerationStrategy;
 }
 
 export interface CompositionRequest {
 	topic: KnowledgeTopic;
-	units: KnowledgeUnit[];
+	chunks: ContentChunk[];
 	chunkAnalyses: KnowledgeChunkAnalysis[];
 	cardCount: number;
-	strategy: GenerationStrategy;
 }
 
 export interface TopicCompositionResult {
@@ -240,12 +170,10 @@ export interface ExistingCardEntry {
 
 export type GenerationProgressPhase =
 	| "preparing"
-	| "estimating"
 	| "extracting"
-	| "ranking"
+	| "grouping"
 	| "composing"
-	| "writing"
-	| "planning-only";
+	| "writing";
 
 export interface GenerationProgressState {
 	phase: GenerationProgressPhase;

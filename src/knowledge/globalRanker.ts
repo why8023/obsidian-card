@@ -2,8 +2,16 @@ import type { DebugRun } from "../debug/debugService";
 import { LlmClient } from "../generation/llmClient";
 import { buildGlobalRankingPrompt } from "../prompts/promptDefaults";
 import type { ObcdSettings } from "../settings";
-import type { KnowledgeTopic, KnowledgeUnit, TopicTier } from "../types";
+import type { KnowledgeChunkAnalysis, KnowledgeTopic } from "../types";
 import { collapseWhitespace, hashContent } from "../utils/markdown";
+import {
+	buildFallbackTopic,
+	fallbackTopicRejectionReason,
+	normalizeRecommendedCardCount,
+	normalizeShouldCreateCards,
+	normalizeTopicImportance,
+	normalizeTopicTier,
+} from "./topicEligibility";
 
 interface RankingResponse {
 	topics?: unknown[];
@@ -20,13 +28,13 @@ export class GlobalRanker {
 		this.llmClient = new LlmClient(settings, debugRun);
 	}
 
-	async rank(units: KnowledgeUnit[]): Promise<KnowledgeTopic[]> {
-		if (units.length === 0) {
+	async rank(analyses: KnowledgeChunkAnalysis[]): Promise<KnowledgeTopic[]> {
+		if (analyses.length === 0) {
 			return [];
 		}
 
 		try {
-			const payload = await this.llmClient.requestJson("rank", [
+			const payload = await this.llmClient.requestJson("group", [
 				{
 					role: "system",
 					content: buildGlobalRankingPrompt({
@@ -39,39 +47,32 @@ export class GlobalRanker {
 				{
 					role: "user",
 					content: JSON.stringify({
-						units: units.map((unit) => ({
-							id: unit.id,
-							chunkId: unit.chunkId,
-							sectionKey: unit.sectionKey,
-							headingPath: unit.headingPath,
-							chunkSummary: unit.chunkSummary,
-							groupLabel: unit.groupLabel,
-							statement: unit.statement,
-							kind: unit.kind,
-							importanceLocal: unit.importanceLocal,
-							candidateQuestionIntent: unit.candidateQuestionIntent,
-							evidenceExcerpt: unit.evidenceExcerpt,
+						chunks: analyses.map((analysis) => ({
+							chunkId: analysis.chunkId,
+							summary: analysis.summary,
+							topicHint: analysis.topicHint,
+							evidenceExcerpt: analysis.evidenceExcerpt,
 						})),
 					}),
 				},
 			]);
 
-			const topics = normalizeTopics(payload, units, this.settings.generation.maxCardsPerTopic);
+			const topics = normalizeTopics(payload, analyses, this.settings.generation.maxCardsPerTopic);
 			if (topics.length > 0) {
-				this.debugRun?.log("rank:topics", `Ranked ${topics.length} topic(s) with LLM output.`, {
+				this.debugRun?.log("topics", `Built ${topics.length} topic(s) with LLM grouping.`, {
 					topicCount: topics.length,
 					topics,
 				});
 				return topics;
 			}
 		} catch (error) {
-			this.debugRun?.log("rank:fallback", "Global ranking fell back to the heuristic ranker.", {
+			this.debugRun?.log("topics:fallback", "Topic grouping fell back to heuristics.", {
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}
 
-		const fallbackTopics = buildFallbackTopics(units, this.settings.generation.maxCardsPerTopic);
-		this.debugRun?.log("rank:topics", `Ranked ${fallbackTopics.length} topic(s) with heuristic fallback.`, {
+		const fallbackTopics = buildFallbackTopics(analyses, this.settings.generation.maxCardsPerTopic);
+		this.debugRun?.log("topics", `Built ${fallbackTopics.length} topic(s) with heuristic grouping.`, {
 			topicCount: fallbackTopics.length,
 			topics: fallbackTopics,
 		});
@@ -79,107 +80,121 @@ export class GlobalRanker {
 	}
 }
 
-function normalizeTopics(payload: unknown, units: KnowledgeUnit[], maxCardsPerTopic: number): KnowledgeTopic[] {
+function normalizeTopics(payload: unknown, analyses: KnowledgeChunkAnalysis[], maxCardsPerTopic: number): KnowledgeTopic[] {
 	const rawTopics = Array.isArray(payload)
 		? payload
 		: Array.isArray((payload as RankingResponse | undefined)?.topics)
 		? (payload as RankingResponse).topics ?? []
 		: [];
-	const unitsById = new Map(units.map((unit) => [unit.id, unit] as const));
+	const analysesByChunkId = new Map(analyses.map((analysis) => [analysis.chunkId, analysis] as const));
 	const topics: KnowledgeTopic[] = [];
+	const seenChunkIds = new Set<string>();
 
 	for (const rawTopic of rawTopics) {
 		if (!isObject(rawTopic)) {
 			continue;
 		}
 
-		const memberUnitIds = Array.isArray(rawTopic.memberUnitIds)
-			? rawTopic.memberUnitIds.filter((value): value is string => typeof value === "string" && unitsById.has(value))
+		const memberChunkIds = Array.isArray(rawTopic.memberChunkIds)
+			? rawTopic.memberChunkIds
+				.filter((value): value is string => typeof value === "string" && analysesByChunkId.has(value))
+				.filter((chunkId) => !seenChunkIds.has(chunkId))
 			: [];
-		if (memberUnitIds.length === 0) {
+		if (memberChunkIds.length === 0) {
 			continue;
 		}
+		const memberAnalyses = memberChunkIds
+			.map((chunkId) => analysesByChunkId.get(chunkId))
+			.filter((analysis): analysis is KnowledgeChunkAnalysis => analysis !== undefined);
 
 		const canonicalStatement = collapseWhitespace(readString(rawTopic.canonicalStatement));
-		if (canonicalStatement.length === 0) {
+		const summary = collapseWhitespace(readString(rawTopic.summary)) || canonicalStatement;
+		const knowledgeGroup = collapseWhitespace(readString(rawTopic.knowledgeGroup))
+			|| resolveDominantGroup(memberAnalyses)
+			|| canonicalStatement;
+		if (canonicalStatement.length === 0 || summary.length === 0 || knowledgeGroup.length === 0) {
 			continue;
 		}
 
-		const memberUnits = memberUnitIds
-			.map((unitId) => unitsById.get(unitId))
-			.filter((unit): unit is KnowledgeUnit => unit !== undefined);
-		const memberChunkIds = Array.from(new Set(memberUnits.map((unit) => unit.chunkId)));
-		const coverageSections = Array.from(new Set(memberUnits.map((unit) => unit.sectionKey)));
-		const knowledgeGroup = collapseWhitespace(readString(rawTopic.knowledgeGroup)) || resolveDominantGroup(memberUnits);
+		const importanceScore = normalizeTopicImportance(rawTopic.importanceScore);
+		const shouldCreateCards = normalizeShouldCreateCards(rawTopic.shouldCreateCards, importanceScore, memberChunkIds.length);
+		const tier = normalizeTopicTier(rawTopic.tier);
+		const recommendedCardCount = normalizeRecommendedCardCount(
+			rawTopic.recommendedCardCount,
+			maxCardsPerTopic,
+			shouldCreateCards,
+		);
+		const rejectionReason = shouldCreateCards
+			? ""
+			: collapseWhitespace(readString(rawTopic.rejectionReason))
+				|| fallbackTopicRejectionReason(shouldCreateCards, importanceScore);
 
 		topics.push({
-			topicId: `topic:${hashContent(`${knowledgeGroup}\u0000${canonicalStatement}\u0000${memberUnitIds.join(",")}`)}`,
+			topicId: `topic:${hashContent(`${knowledgeGroup}\u0000${canonicalStatement}\u0000${memberChunkIds.join(",")}`)}`,
 			canonicalStatement,
 			knowledgeGroup,
-			memberUnitIds,
+			summary,
 			memberChunkIds,
-			importanceGlobal: normalizeImportance(rawTopic.importanceGlobal),
-			coverageSections,
-			tier: normalizeTier(rawTopic.tier),
-			recommendedCardCount: normalizeCardCount(rawTopic.recommendedCardCount, maxCardsPerTopic),
-			evidenceRefs: memberUnits.slice(0, 3).map((unit) => ({
-				unitId: unit.id,
-				excerpt: unit.evidenceExcerpt,
-			})),
+			importanceScore,
+			tier,
+			recommendedCardCount,
+			shouldCreateCards,
+			rejectionReason,
+		});
+		memberChunkIds.forEach((chunkId) => seenChunkIds.add(chunkId));
+	}
+
+	for (const analysis of analyses) {
+		if (seenChunkIds.has(analysis.chunkId)) {
+			continue;
+		}
+
+		const fallbackTopic = buildFallbackTopic([analysis.chunkId], [analysis], maxCardsPerTopic);
+		if (!fallbackTopic) {
+			continue;
+		}
+
+		topics.push({
+			...fallbackTopic,
+			topicId: `topic:${hashContent(`${fallbackTopic.knowledgeGroup}\u0000${analysis.chunkId}`)}`,
 		});
 	}
 
-	return topics.sort((left, right) => right.importanceGlobal - left.importanceGlobal);
+	return topics.sort((left, right) => (
+		Number(right.shouldCreateCards) - Number(left.shouldCreateCards)
+		|| right.importanceScore - left.importanceScore
+	));
 }
 
-function buildFallbackTopics(units: KnowledgeUnit[], maxCardsPerTopic: number): KnowledgeTopic[] {
-	const grouped = new Map<string, KnowledgeUnit[]>();
+function buildFallbackTopics(analyses: KnowledgeChunkAnalysis[], maxCardsPerTopic: number): KnowledgeTopic[] {
+	const grouped = new Map<string, KnowledgeChunkAnalysis[]>();
 
-	for (const unit of units) {
-		if (unit.kind === "ignore") {
-			continue;
-		}
-
-		const key = `${collapseWhitespace(unit.groupLabel).toLowerCase()}\u0000${collapseWhitespace(unit.statement).toLowerCase()}`;
+	for (const analysis of analyses) {
+		const key = collapseWhitespace(analysis.topicHint).toLowerCase()
+			|| collapseWhitespace(analysis.summary).toLowerCase();
 		const group = grouped.get(key) ?? [];
-		group.push(unit);
+		group.push(analysis);
 		grouped.set(key, group);
 	}
 
 	return Array.from(grouped.values())
-		.map((group) => {
-			const canonicalStatement = group[0]?.statement ?? "";
-			const importanceGlobal = group.reduce((sum, unit) => sum + scoreUnit(unit), 0) / Math.max(group.length, 1);
-			const tier = importanceGlobal >= 0.72 ? "core" : "secondary";
-			const knowledgeGroup = resolveDominantGroup(group);
-
-			return {
-				topicId: `topic:${hashContent(group.map((unit) => unit.id).join(","))}`,
-				canonicalStatement,
-				knowledgeGroup,
-				memberUnitIds: group.map((unit) => unit.id),
-				memberChunkIds: Array.from(new Set(group.map((unit) => unit.chunkId))),
-				importanceGlobal: Number.parseFloat(importanceGlobal.toFixed(2)),
-				coverageSections: Array.from(new Set(group.map((unit) => unit.sectionKey))),
-				tier,
-				recommendedCardCount: Math.min(
-					maxCardsPerTopic,
-					tier === "core" && canonicalStatement.length > 120 ? 2 : 1,
-				),
-				evidenceRefs: group.slice(0, 3).map((unit) => ({
-					unitId: unit.id,
-					excerpt: unit.evidenceExcerpt,
-				})),
-			} satisfies KnowledgeTopic;
-		})
-		.sort((left, right) => right.importanceGlobal - left.importanceGlobal);
+		.map((group) => buildFallbackTopic(group.map((analysis) => analysis.chunkId), group, maxCardsPerTopic))
+		.filter((topic): topic is KnowledgeTopic => topic !== null)
+		.map((topic) => ({
+			...topic,
+			topicId: `topic:${hashContent(`${topic.knowledgeGroup}\u0000${topic.canonicalStatement}\u0000${topic.memberChunkIds.join(",")}`)}`,
+		}))
+		.sort((left, right) => (
+			Number(right.shouldCreateCards) - Number(left.shouldCreateCards)
+			|| right.importanceScore - left.importanceScore
+		));
 }
 
-function resolveDominantGroup(units: KnowledgeUnit[]): string {
+function resolveDominantGroup(analyses: KnowledgeChunkAnalysis[]): string {
 	const counts = new Map<string, number>();
 
-	for (const unit of units) {
-		const group = collapseWhitespace(unit.groupLabel);
+	for (const analysis of analyses) {
+		const group = collapseWhitespace(analysis.topicHint);
 		if (group.length === 0) {
 			continue;
 		}
@@ -196,50 +211,7 @@ function resolveDominantGroup(units: KnowledgeUnit[]): string {
 		}
 	}
 
-	return selectedGroup.length > 0 ? selectedGroup : "未分组知识面";
-}
-
-function scoreUnit(unit: KnowledgeUnit): number {
-	const kindWeight = (() => {
-		switch (unit.kind) {
-			case "core-concept":
-				return 1;
-			case "key-conclusion":
-				return 0.95;
-			case "supporting-detail":
-				return 0.65;
-			case "process-detail":
-				return 0.55;
-			case "background":
-				return 0.4;
-			case "example":
-				return 0.25;
-			case "ignore":
-				return 0;
-		}
-	})();
-
-	return Number.parseFloat(((unit.importanceLocal * 0.7) + (kindWeight * 0.3)).toFixed(2));
-}
-
-function normalizeTier(value: unknown): TopicTier {
-	return value === "secondary" ? "secondary" : "core";
-}
-
-function normalizeCardCount(value: unknown, maxCardsPerTopic: number): number {
-	if (typeof value !== "number" || Number.isNaN(value)) {
-		return 1;
-	}
-
-	return Math.max(1, Math.min(maxCardsPerTopic, Math.round(value)));
-}
-
-function normalizeImportance(value: unknown): number {
-	if (typeof value !== "number" || Number.isNaN(value)) {
-		return 0.5;
-	}
-
-	return Math.max(0, Math.min(1, value));
+	return selectedGroup;
 }
 
 function readString(value: unknown): string {

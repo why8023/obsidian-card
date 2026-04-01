@@ -668,18 +668,14 @@ export class CardSidebarView extends ItemView {
 		switch (phase) {
 			case "preparing":
 				return "Preparing";
-			case "estimating":
-				return "Estimating";
 			case "extracting":
 				return "Extracting";
-			case "ranking":
-				return "Ranking";
+			case "grouping":
+				return "Grouping";
 			case "composing":
 				return "Composing";
 			case "writing":
 				return "Writing";
-			case "planning-only":
-				return "Planning";
 			default:
 				return phase;
 		}
@@ -689,8 +685,8 @@ export class CardSidebarView extends ItemView {
 		switch (phase) {
 			case "composing":
 				return "Topic";
-			case "planning-only":
-				return "Section";
+			case "grouping":
+				return "Topic";
 			default:
 				return "Chunk";
 		}

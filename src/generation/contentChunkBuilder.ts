@@ -5,11 +5,10 @@ import type { ContentChunk, ExistingKnowledgeAnnotation, TextRange } from "../ty
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import {
 	collectLineInfos,
-	collectMarkdownHeadings,
 	findFrontmatterEnd,
 	hashContent,
+	makePreview,
 	normalizeContentForHash,
-	slugifyHeading,
 	trimContentRange,
 } from "../utils/markdown";
 
@@ -21,14 +20,6 @@ interface BuildFileChunksOptions {
 interface CandidateBlock {
 	range: TextRange;
 	text: string;
-	headingPath: string[];
-	titleHint?: string;
-	blockKind: "heading" | "preamble";
-}
-
-interface HeadingCursor {
-	index: number;
-	stack: Array<{ level: number; title: string }>;
 }
 
 const DEFAULT_TARGET_CHUNK_CHARACTERS = 900;
@@ -48,14 +39,10 @@ export function buildSelectionChunks(file: TFile, selectedText: string, range: T
 		file,
 		filePath: file.path,
 		chunkId: `selection:${range.from}-${range.to}:${sourceHash.slice(-8)}`,
-		isKnowledgeCandidate: true,
 		text: trimmedText,
 		range,
 		kind: "selection",
-		blockKind: "selection",
-		sectionKey: `selection:${range.from}-${range.to}`,
 		sourceHash,
-		headingPath: [],
 		insertOffset: range.to,
 		bodyRange: range,
 		titleHint: file.basename,
@@ -66,31 +53,23 @@ export function buildSelectionChunks(file: TFile, selectedText: string, range: T
 export function buildFileChunks(file: TFile, content: string, options: BuildFileChunksOptions = {}): ContentChunk[] {
 	const targetChunkCharacters = normalizeTargetChunkCharacters(options.targetChunkCharacters);
 	const contentStart = findFrontmatterEnd(content);
-	const headings = collectMarkdownHeadings(content).filter((heading) => heading.from >= contentStart);
 	const existingAnnotations = collectKnowledgeAnnotations(content);
 	const cardRanges = collectExistingCardEntries(file, content).map((entry) => entry.blockRange);
-	const atomicBlocks = collectAtomicBlocks(file, content, headings, cardRanges, contentStart);
+	const atomicBlocks = collectAtomicBlocks(content, cardRanges, contentStart);
 	const mergedBlocks = mergeBlocksByTargetSize(atomicBlocks, targetChunkCharacters);
 	const chunks = materializeChunks(file, mergedBlocks, existingAnnotations);
 	return filterChunksByOffset(chunks, options.upToOffset);
 }
 
 function collectAtomicBlocks(
-	file: TFile,
 	content: string,
-	headings: ReturnType<typeof collectMarkdownHeadings>,
 	cardRanges: TextRange[],
 	contentStart: number,
 ): CandidateBlock[] {
 	const lines = collectLineInfos(content);
 	const blocks: CandidateBlock[] = [];
-	const headingCursor: HeadingCursor = {
-		index: 0,
-		stack: [],
-	};
 	let activeBlockStart: number | null = null;
 	let activeBlockEnd = 0;
-	let activeHeadingPath: string[] = [];
 	let fenceMarker: string | null = null;
 	let lineIndex = findFirstLineIndex(lines, contentStart);
 
@@ -98,7 +77,6 @@ function collectAtomicBlocks(
 		if (activeBlockStart === null || activeBlockEnd <= activeBlockStart) {
 			activeBlockStart = null;
 			activeBlockEnd = 0;
-			activeHeadingPath = [];
 			return;
 		}
 
@@ -106,7 +84,6 @@ function collectAtomicBlocks(
 		if (trimmed.text.length === 0 || !containsMeaningfulText(trimmed.text)) {
 			activeBlockStart = null;
 			activeBlockEnd = 0;
-			activeHeadingPath = [];
 			return;
 		}
 
@@ -116,14 +93,10 @@ function collectAtomicBlocks(
 				to: trimmed.to,
 			},
 			text: trimmed.text,
-			headingPath: [...activeHeadingPath],
-			titleHint: activeHeadingPath[activeHeadingPath.length - 1] ?? file.basename,
-			blockKind: activeHeadingPath.length > 0 ? "heading" : "preamble",
 		});
 
 		activeBlockStart = null;
 		activeBlockEnd = 0;
-		activeHeadingPath = [];
 	};
 
 	while (lineIndex < lines.length) {
@@ -146,21 +119,12 @@ function collectAtomicBlocks(
 			continue;
 		}
 
-		updateHeadingCursor(headingCursor, headings, line.start, fenceMarker === null);
-
-		const currentHeading = headings[headingCursor.index];
-		if (fenceMarker === null && currentHeading && currentHeading.from === line.start) {
-			headingCursor.stack = applyHeading(headingCursor.stack, currentHeading.level, currentHeading.title);
-			headingCursor.index += 1;
-		}
-
 		const fenceMatch = line.text.match(/^ {0,3}(`{3,}|~{3,})/);
 		if (fenceMatch) {
 			const marker = fenceMatch[1];
 			if (marker) {
 				if (activeBlockStart === null) {
 					activeBlockStart = line.start;
-					activeHeadingPath = headingCursor.stack.map((entry) => entry.title);
 				}
 				activeBlockEnd = line.end;
 
@@ -183,7 +147,6 @@ function collectAtomicBlocks(
 
 		if (activeBlockStart === null) {
 			activeBlockStart = line.start;
-			activeHeadingPath = headingCursor.stack.map((entry) => entry.title);
 		}
 		activeBlockEnd = line.end;
 		lineIndex += 1;
@@ -221,9 +184,6 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 				to: nextBlock.range.to,
 			},
 			text: `${current.text}\n\n${nextBlock.text}`,
-			headingPath: current.headingPath.length > 0 ? [...current.headingPath] : [...nextBlock.headingPath],
-			titleHint: current.titleHint ?? nextBlock.titleHint,
-			blockKind: current.blockKind === "heading" || nextBlock.blockKind === "heading" ? "heading" : "preamble",
 		};
 	}
 
@@ -243,8 +203,6 @@ function materializeChunks(
 		const sourceHash = hashContent(normalizedContent);
 		const occurrence = (hashOccurrences.get(sourceHash) ?? 0) + 1;
 		hashOccurrences.set(sourceHash, occurrence);
-		const contextLabel = block.headingPath[0] ?? block.titleHint ?? file.basename;
-		const sectionKey = `${slugifyHeading(contextLabel)}#${occurrence}`;
 		const overlappingAnnotations = existingAnnotations.filter((annotation) => isAnnotationContainedWithinBlock(annotation, block.range));
 		const matchingAnnotation = overlappingAnnotations.find((annotation) => annotation.data.hash === sourceHash);
 
@@ -252,63 +210,23 @@ function materializeChunks(
 			file,
 			filePath: file.path,
 			chunkId: `block:${sourceHash}:${occurrence}`,
-			isKnowledgeCandidate: true,
 			text: block.text,
 			range: {
 				from: block.range.from,
 				to: block.range.to,
 			},
-			kind: "section",
-			blockKind: block.blockKind,
-			sectionKey,
+			kind: "paragraph-group",
 			sourceHash,
-			headingPath: [...block.headingPath],
 			insertOffset: block.range.to,
 			bodyRange: {
 				from: block.range.from,
 				to: block.range.to,
 			},
-			titleHint: block.titleHint,
+			titleHint: buildChunkTitle(block.text, file.basename, occurrence),
 			existingAnnotations: overlappingAnnotations,
 			existingAnnotation: matchingAnnotation,
 		} satisfies ContentChunk;
 	});
-}
-
-function updateHeadingCursor(
-	cursor: HeadingCursor,
-	headings: ReturnType<typeof collectMarkdownHeadings>,
-	offset: number,
-	allowUpdates: boolean,
-): void {
-	if (!allowUpdates) {
-		return;
-	}
-
-	while (cursor.index < headings.length && (headings[cursor.index]?.from ?? Number.POSITIVE_INFINITY) < offset) {
-		const heading = headings[cursor.index];
-		if (heading) {
-			cursor.stack = applyHeading(cursor.stack, heading.level, heading.title);
-		}
-		cursor.index += 1;
-	}
-}
-
-function applyHeading(
-	stack: Array<{ level: number; title: string }>,
-	level: number,
-	title: string,
-): Array<{ level: number; title: string }> {
-	const nextStack = [...stack];
-	while (nextStack.length > 0 && (nextStack[nextStack.length - 1]?.level ?? 0) >= level) {
-		nextStack.pop();
-	}
-
-	nextStack.push({
-		level,
-		title,
-	});
-	return nextStack;
 }
 
 function cloneBlock(block: CandidateBlock): CandidateBlock {
@@ -318,10 +236,12 @@ function cloneBlock(block: CandidateBlock): CandidateBlock {
 			to: block.range.to,
 		},
 		text: block.text,
-		headingPath: [...block.headingPath],
-		titleHint: block.titleHint,
-		blockKind: block.blockKind,
 	};
+}
+
+function buildChunkTitle(text: string, fileBasename: string, occurrence: number): string {
+	const preview = makePreview(text, 48);
+	return preview.length > 0 ? preview : `${fileBasename} chunk ${occurrence}`;
 }
 
 function findCoveringRange(ranges: TextRange[], offset: number): TextRange | null {

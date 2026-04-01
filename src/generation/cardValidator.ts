@@ -1,5 +1,8 @@
-import type { CardCandidate, ChunkGenerationResult, GeneratedBasicCard, ReviewGroup } from "../types";
+import type { CardCandidate, ChunkGenerationResult, GeneratedBasicCard, KnowledgeTopic, ReviewGroup } from "../types";
 import { collapseWhitespace, makePreview } from "../utils/markdown";
+
+const CONTEXT_DEPENDENT_PATTERN = /\b(this section|this chapter|the section above|the section below|above|below|here|the title|this heading|that heading)\b/i;
+const CONTEXT_DEPENDENT_PATTERN_ZH = /(本节|本章|上文|下文|前文|后文|这里|该节|该标题|这个标题)/;
 
 export function buildReviewGroups(results: ChunkGenerationResult[]): ReviewGroup[] {
 	const groups: ReviewGroup[] = [];
@@ -45,12 +48,38 @@ export function buildReviewGroups(results: ChunkGenerationResult[]): ReviewGroup
 	return groups;
 }
 
+export function validateGeneratedCards(cards: GeneratedBasicCard[], topic: KnowledgeTopic): GeneratedBasicCard[] {
+	const acceptedCards: GeneratedBasicCard[] = [];
+	const seenKeys = new Set<string>();
+
+	for (const rawCard of cards) {
+		const normalizedCard = normalizeCard(rawCard);
+		if (normalizedCard === null) {
+			continue;
+		}
+
+		if (!isStandaloneCard(normalizedCard)) {
+			continue;
+		}
+
+		const dedupeKey = `${normalizedCard.front.toLowerCase()}::${normalizedCard.back.toLowerCase()}`;
+		if (seenKeys.has(dedupeKey)) {
+			continue;
+		}
+
+		seenKeys.add(dedupeKey);
+		acceptedCards.push(normalizedCard);
+	}
+
+	return acceptedCards;
+}
+
 function normalizeCard(card: GeneratedBasicCard): GeneratedBasicCard | null {
 	const front = collapseWhitespace(card.front);
 	const back = collapseWhitespace(card.back);
 	const tags = normalizeTags(card.tags);
 
-	if (front.length === 0 || back.length === 0) {
+	if (front.length < 8 || back.length < 4) {
 		return null;
 	}
 
@@ -63,6 +92,14 @@ function normalizeCard(card: GeneratedBasicCard): GeneratedBasicCard | null {
 		back,
 		tags,
 	};
+}
+
+function isStandaloneCard(card: GeneratedBasicCard): boolean {
+	return !containsContextDependentLanguage(card.front) && !containsContextDependentLanguage(card.back);
+}
+
+function containsContextDependentLanguage(value: string): boolean {
+	return CONTEXT_DEPENDENT_PATTERN.test(value) || CONTEXT_DEPENDENT_PATTERN_ZH.test(value);
 }
 
 function normalizeTags(tags: string[]): string[] {

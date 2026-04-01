@@ -59,22 +59,6 @@ export function registerCommands(plugin: ObcdPlugin): void {
 	});
 
 	plugin.addCommand({
-		id: "generate-basic-flashcards-for-current-section",
-		name: "Generate basic flashcards for current section",
-		editorCheckCallback: (checking, editor, ctx) => {
-			if (resolveCursorTarget(editor, ctx) === null) {
-				return false;
-			}
-
-			if (!checking) {
-				void plugin.workflow.generateForCurrentSection(editor, ctx);
-			}
-
-			return true;
-		},
-	});
-
-	plugin.addCommand({
 		id: "generate-basic-flashcards-for-folder",
 		name: "Generate basic flashcards for folder",
 		checkCallback: (checking) => {

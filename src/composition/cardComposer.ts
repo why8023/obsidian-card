@@ -1,4 +1,5 @@
 import type { DebugRun } from "../debug/debugService";
+import { validateGeneratedCards } from "../generation/cardValidator";
 import { LlmClient } from "../generation/llmClient";
 import { buildCardCompositionPrompt } from "../prompts/promptDefaults";
 import type { ObcdSettings } from "../settings";
@@ -22,7 +23,6 @@ export class CardComposer {
 				role: "system",
 				content: buildCardCompositionPrompt({
 					cardCount: request.cardCount,
-					strategy: request.strategy,
 				}, this.customInstruction),
 			},
 			{
@@ -33,31 +33,28 @@ export class CardComposer {
 						tier: request.topic.tier,
 						knowledgeGroup: request.topic.knowledgeGroup,
 						canonicalStatement: request.topic.canonicalStatement,
+						summary: request.topic.summary,
 						recommendedCardCount: request.topic.recommendedCardCount,
 					},
-					knowledgeBlocks: request.chunkAnalyses.map((analysis) => ({
+					chunkAnalyses: request.chunkAnalyses.map((analysis) => ({
 						chunkId: analysis.chunkId,
-						titleHint: analysis.titleHint ?? "",
-						headingPath: analysis.headingPath,
 						summary: analysis.summary,
-						group: analysis.group,
+						topicHint: analysis.topicHint,
+						evidenceExcerpt: analysis.evidenceExcerpt,
 					})),
-					sourceUnits: request.units.map((unit) => ({
-						id: unit.id,
-						chunkId: unit.chunkId,
-						headingPath: unit.headingPath,
-						chunkSummary: unit.chunkSummary,
-						groupLabel: unit.groupLabel,
-						statement: unit.statement,
-						candidateQuestionIntent: unit.candidateQuestionIntent,
-						evidenceExcerpt: unit.evidenceExcerpt,
+					sourceChunks: request.chunks.map((chunk) => ({
+						chunkId: chunk.chunkId,
+						text: chunk.text,
 					})),
 				}),
 			},
 		]);
 
-		const cards = normalizeCards(payload).slice(0, request.cardCount);
-		this.debugRun?.log("compose:cards", `Composed ${cards.length} card(s) for topic ${request.topic.topicId}.`, {
+		const cards = validateGeneratedCards(
+			normalizeCards(payload).slice(0, request.cardCount),
+			request.topic,
+		).slice(0, request.cardCount);
+		this.debugRun?.log("compose:cards", `Composed ${cards.length} validated card(s) for topic ${request.topic.topicId}.`, {
 			topicId: request.topic.topicId,
 			cardCount: cards.length,
 			cards,
@@ -68,9 +65,7 @@ export class CardComposer {
 			cards,
 			source: {
 				topicId: request.topic.topicId,
-				unitIds: request.units.map((unit) => unit.id),
-				chunkIds: Array.from(new Set(request.units.map((unit) => unit.chunkId))),
-				strategy: request.strategy,
+				chunkIds: request.chunks.map((chunk) => chunk.chunkId),
 			},
 		};
 	}

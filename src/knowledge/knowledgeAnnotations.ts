@@ -1,6 +1,5 @@
-import type { ExistingKnowledgeAnnotation, KnowledgeAnnotationData } from "../types";
+import type { ExistingKnowledgeAnnotation, KnowledgeAnnotationData, TextRange } from "../types";
 import { KNOWLEDGE_ANNOTATION_VERSION } from "../types";
-import type { TextRange } from "../types";
 import { collapseWhitespace } from "../utils/markdown";
 
 const KNOWLEDGE_START_PREFIX = "<!-- obcd-knowledge-start:";
@@ -51,8 +50,10 @@ export function renderKnowledgeAnnotationStart(data: KnowledgeAnnotationData): s
 	const payload = JSON.stringify({
 		version: KNOWLEDGE_ANNOTATION_VERSION,
 		hash: data.hash,
+		status: data.status,
 		summary: collapseWhitespace(data.summary),
-		group: collapseWhitespace(data.group),
+		topicHint: collapseWhitespace(data.topicHint),
+		rejectionReason: collapseWhitespace(data.rejectionReason),
 	});
 	return `${KNOWLEDGE_START_PREFIX} ${payload} -->`;
 }
@@ -78,19 +79,25 @@ function parseKnowledgeStartComment(comment: string): KnowledgeAnnotationData | 
 	}
 
 	try {
-		const parsed = JSON.parse(jsonPayload) as Partial<KnowledgeAnnotationData>;
+		const parsed = JSON.parse(jsonPayload) as Partial<KnowledgeAnnotationData> & { group?: unknown };
 		const summary = typeof parsed.summary === "string" ? collapseWhitespace(parsed.summary) : "";
-		const group = typeof parsed.group === "string" ? collapseWhitespace(parsed.group) : "";
+		const legacyGroup = typeof parsed.group === "string" ? collapseWhitespace(parsed.group) : "";
+		const topicHint = typeof parsed.topicHint === "string"
+			? collapseWhitespace(parsed.topicHint)
+			: legacyGroup;
+		const rejectionReason = typeof parsed.rejectionReason === "string" ? collapseWhitespace(parsed.rejectionReason) : "";
 		const hash = typeof parsed.hash === "string" ? parsed.hash.trim() : "";
-		if (summary.length === 0 || group.length === 0 || hash.length === 0) {
+		if (summary.length === 0 || hash.length === 0) {
 			return null;
 		}
 
 		return {
 			version: typeof parsed.version === "number" ? parsed.version : KNOWLEDGE_ANNOTATION_VERSION,
 			hash,
+			status: parsed.status === "no-knowledge" ? "no-knowledge" : "knowledge",
 			summary,
-			group,
+			topicHint,
+			rejectionReason,
 		};
 	} catch {
 		return null;

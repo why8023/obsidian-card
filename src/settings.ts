@@ -23,10 +23,9 @@ import {
 } from "./prompts/promptResolver";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 12;
+const SETTINGS_SCHEMA_VERSION = 13;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
-export type OversizeStrategy = "chapter-planning" | "refuse-or-scope";
 export type RegenerationPolicy = "full-document-rebuild" | "scope-rebuild";
 
 export interface FlashcardGenerationSettings {
@@ -40,16 +39,10 @@ export interface FlashcardGenerationSettings {
 	maxTotalCardsPerDocument: number;
 	maxCardsPerTopic: number;
 	targetChunkCharacters: number;
-	maxKnowledgeUnitsPerChunk: number;
-	maxChunksForDirectGlobal: number;
-	maxTokensForDirectGlobal: number;
 	maxTaskInputTokens: number;
 	maxTaskChunks: number;
 	maxTaskLlmCalls: number;
-	maxHierarchyDepth: number;
-	oversizeStrategy: OversizeStrategy;
 	defaultRegenerationPolicy: RegenerationPolicy;
-	maxCardsPerChunk: number;
 }
 
 export interface ObcdDebugSettings {
@@ -103,16 +96,10 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	maxTotalCardsPerDocument: 10,
 	maxCardsPerTopic: 2,
 	targetChunkCharacters: 900,
-	maxKnowledgeUnitsPerChunk: 4,
-	maxChunksForDirectGlobal: 18,
-	maxTokensForDirectGlobal: 12000,
 	maxTaskInputTokens: 22000,
 	maxTaskChunks: 36,
 	maxTaskLlmCalls: 48,
-	maxHierarchyDepth: 2,
-	oversizeStrategy: "chapter-planning",
 	defaultRegenerationPolicy: "full-document-rebuild",
-	maxCardsPerChunk: 3,
 };
 
 export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
@@ -400,51 +387,8 @@ export class ObcdSettingTab extends PluginSettingTab {
 				}));
 
 		new Setting(containerEl)
-			.setName("每个分块最大知识单元数")
-			.setDesc("限制全局排序前，每个文本分块最多提取多少个候选知识点。")
-			.addText((text) => text
-				.setPlaceholder("4")
-				.setValue(String(this.plugin.settings.generation.maxKnowledgeUnitsPerChunk))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
-						this.plugin.settings.generation.maxKnowledgeUnitsPerChunk = parsedValue;
-						this.plugin.settings.generation.maxCardsPerChunk = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("直接全局生成的分块上限")
-			.setDesc("如果文档分块数超过这个值，插件将不再使用直接全局生成流程。")
-			.addText((text) => text
-				.setPlaceholder("18")
-				.setValue(String(this.plugin.settings.generation.maxChunksForDirectGlobal))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
-						this.plugin.settings.generation.maxChunksForDirectGlobal = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("直接全局生成的 Token 上限")
-			.setDesc("估算的整篇文档 Token 上限。超过后将退出完整文档排序流程。")
-			.addText((text) => text
-				.setPlaceholder("12000")
-				.setValue(String(this.plugin.settings.generation.maxTokensForDirectGlobal))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
-						this.plugin.settings.generation.maxTokensForDirectGlobal = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
 			.setName("单次任务 Token 上限")
-			.setDesc("单次生成任务的硬上限。超大文件会在开始前降级处理或直接拒绝。")
+			.setDesc("单次生成任务的硬上限。超过后会直接提示缩小范围。")
 			.addText((text) => text
 				.setPlaceholder("22000")
 				.setValue(String(this.plugin.settings.generation.maxTaskInputTokens))
@@ -472,7 +416,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("单次任务 API 调用上限")
-			.setDesc("单次任务中抽取、排序和组合阶段允许的总调用次数上限。")
+			.setDesc("单次任务中分块分析、知识点归并和制卡阶段允许的总调用次数上限。")
 			.addText((text) => text
 				.setPlaceholder("48")
 				.setValue(String(this.plugin.settings.generation.maxTaskLlmCalls))
@@ -486,7 +430,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("并行 API 请求上限")
-			.setDesc("独立分块、章节摘要和主题制卡阶段最多同时发起多少个请求。过高可能触发模型服务限流。")
+			.setDesc("独立分块分析、知识点归并和主题制卡阶段最多同时发起多少个请求。过高可能触发模型服务限流。")
 			.addText((text) => text
 				.setPlaceholder("3")
 				.setValue(String(this.plugin.settings.generation.maxConcurrentLlmRequests))
@@ -496,32 +440,6 @@ export class ObcdSettingTab extends PluginSettingTab {
 						this.plugin.settings.generation.maxConcurrentLlmRequests = parsedValue;
 						await this.plugin.saveSettings();
 					}
-				}));
-
-		new Setting(containerEl)
-			.setName("最大层级深度")
-			.setDesc("控制插件在文档级排序前是否先压缩章节知识。大于 1 时启用分层全局生成。")
-			.addText((text) => text
-				.setPlaceholder("2")
-				.setValue(String(this.plugin.settings.generation.maxHierarchyDepth))
-				.onChange(async (value) => {
-					const parsedValue = Number.parseInt(value, 10);
-					if (Number.isFinite(parsedValue) && parsedValue > 0) {
-						this.plugin.settings.generation.maxHierarchyDepth = parsedValue;
-						await this.plugin.saveSettings();
-					}
-				}));
-
-		new Setting(containerEl)
-			.setName("超大文档处理方式")
-			.setDesc("决定超大笔记是降级为章节规划，还是直接停止并提示缩小范围。")
-			.addDropdown((dropdown) => dropdown
-				.addOption("chapter-planning", "降级为章节规划")
-				.addOption("refuse-or-scope", "停止并提示缩小范围")
-				.setValue(this.plugin.settings.generation.oversizeStrategy)
-				.onChange(async (value) => {
-					this.plugin.settings.generation.oversizeStrategy = value as OversizeStrategy;
-					await this.plugin.saveSettings();
 				}));
 
 		new Setting(containerEl)
@@ -573,7 +491,7 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("提示词")
-			.setDesc("配置会追加到抽取、排序、规划和组合阶段的共享提示词。")
+			.setDesc("配置会追加到分块分析、知识点归并和制卡阶段的共享提示词。")
 			.setHeading();
 
 		new Setting(containerEl)
@@ -818,7 +736,6 @@ function parseProviders(value: unknown, fallback: FlashcardProvider[]): Flashcar
 
 function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSettings): FlashcardGenerationSettings {
 	const generationSource = isRecord(value) ? value : {};
-	const legacyMaxCardsPerChunk = readNumber(generationSource.maxCardsPerChunk, fallback.maxCardsPerChunk, { min: 1, max: 20 });
 
 	return {
 		model: readString(generationSource.model, fallback.model),
@@ -835,20 +752,10 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 		maxTotalCardsPerDocument: readNumber(generationSource.maxTotalCardsPerDocument, fallback.maxTotalCardsPerDocument, { min: 1, max: 80 }),
 		maxCardsPerTopic: readNumber(generationSource.maxCardsPerTopic, fallback.maxCardsPerTopic, { min: 1, max: 5 }),
 		targetChunkCharacters: readNumber(generationSource.targetChunkCharacters, fallback.targetChunkCharacters, { min: 200, max: 4000 }),
-		maxKnowledgeUnitsPerChunk: readNumber(
-			generationSource.maxKnowledgeUnitsPerChunk,
-			legacyMaxCardsPerChunk > 0 ? Math.max(fallback.maxKnowledgeUnitsPerChunk, legacyMaxCardsPerChunk) : fallback.maxKnowledgeUnitsPerChunk,
-			{ min: 1, max: 12 },
-		),
-		maxChunksForDirectGlobal: readNumber(generationSource.maxChunksForDirectGlobal, fallback.maxChunksForDirectGlobal, { min: 1, max: 80 }),
-		maxTokensForDirectGlobal: readNumber(generationSource.maxTokensForDirectGlobal, fallback.maxTokensForDirectGlobal, { min: 1000, max: 50000 }),
 		maxTaskInputTokens: readNumber(generationSource.maxTaskInputTokens, fallback.maxTaskInputTokens, { min: 2000, max: 100000 }),
 		maxTaskChunks: readNumber(generationSource.maxTaskChunks, fallback.maxTaskChunks, { min: 1, max: 120 }),
 		maxTaskLlmCalls: readNumber(generationSource.maxTaskLlmCalls, fallback.maxTaskLlmCalls, { min: 3, max: 200 }),
-		maxHierarchyDepth: readNumber(generationSource.maxHierarchyDepth, fallback.maxHierarchyDepth, { min: 1, max: 4 }),
-		oversizeStrategy: readOversizeStrategy(generationSource.oversizeStrategy, fallback.oversizeStrategy),
 		defaultRegenerationPolicy: readRegenerationPolicy(generationSource.defaultRegenerationPolicy, fallback.defaultRegenerationPolicy),
-		maxCardsPerChunk: legacyMaxCardsPerChunk,
 	};
 }
 
@@ -919,10 +826,6 @@ function readPresetType(value: unknown, fallback: FlashcardProviderPresetType): 
 	}
 
 	return fallback;
-}
-
-function readOversizeStrategy(value: unknown, fallback: OversizeStrategy): OversizeStrategy {
-	return value === "chapter-planning" || value === "refuse-or-scope" ? value : fallback;
 }
 
 function readRegenerationPolicy(value: unknown, fallback: RegenerationPolicy): RegenerationPolicy {

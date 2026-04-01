@@ -4,7 +4,7 @@ import { renderKnowledgeAnnotationEnd, renderKnowledgeAnnotationStart } from "..
 import type { ObarCompatibilityConfig } from "../obarCompatibility";
 import { isObarRecordContent, renderObarWrappedBlock } from "../obarCompatibility";
 import type { ApprovedCardGroup, ContentChunk, GeneratedBasicCard, KnowledgeChunkAnalysis, TextRange } from "../types";
-import { GENERATED_CARD_TYPE, KNOWLEDGE_ANNOTATION_VERSION } from "../types";
+import { KNOWLEDGE_ANNOTATION_VERSION, GENERATED_CARD_TYPE } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { detectNewline } from "../utils/markdown";
 
@@ -280,8 +280,10 @@ function renderKnowledgeBlock(bodyText: string, analysis: KnowledgeChunkAnalysis
 		renderKnowledgeAnnotationStart({
 			version: KNOWLEDGE_ANNOTATION_VERSION,
 			hash: analysis.hash,
+			status: analysis.status,
 			summary: analysis.summary,
-			group: analysis.group,
+			topicHint: analysis.topicHint,
+			rejectionReason: analysis.rejectionReason,
 		}),
 		normalizedBody,
 		renderKnowledgeAnnotationEnd(),
