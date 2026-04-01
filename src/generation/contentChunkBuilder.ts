@@ -38,7 +38,7 @@ export function buildSelectionChunks(file: TFile, selectedText: string, range: T
 	return [{
 		file,
 		filePath: file.path,
-		chunkId: `selection:${range.from}-${range.to}:${sourceHash.slice(-8)}`,
+		chunkId: `selection:${range.from}-${range.to}:${sourceHash.slice(0, 8)}`,
 		text: trimmedText,
 		range,
 		kind: "selection",
