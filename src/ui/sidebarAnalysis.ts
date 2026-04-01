@@ -1,8 +1,11 @@
 import type {
+	ChunkKnowledgeStatus,
 	ExistingCardEntry,
 	GenerationMode,
+	TextRange,
 	TopicTier,
 } from "../types";
+import { collectKnowledgeAnnotations } from "../knowledge/knowledgeAnnotations";
 import type { PersistedDocumentMetadata } from "../writing/documentMetadataWriter";
 
 export type SidebarTopicAnalysisStatus = "planned" | "eligible" | "analysis-only";
@@ -22,12 +25,27 @@ export interface SidebarTopicAnalysisItem {
 	rejectionReason: string;
 }
 
+export interface SidebarBlockAnalysisItem {
+	blockIndex: number;
+	status: ChunkKnowledgeStatus;
+	summary: string;
+	topicHint: string;
+	evidenceExcerpt: string;
+	rejectionReason: string;
+	extractedAt: string;
+	bodyRange: TextRange;
+	blockRange: TextRange;
+}
+
 export interface SidebarAnalysisSnapshot {
 	generatedAt: string;
 	mode: GenerationMode | null;
 	model: string;
 	promptSource: string;
 	knowledgeChunkCount: number;
+	blockCount: number;
+	knowledgeBlockCount: number;
+	skippedBlockCount: number;
 	topicCount: number;
 	coreTopicCount: number;
 	secondaryTopicCount: number;
@@ -42,18 +60,21 @@ export interface SidebarAnalysisSnapshot {
 		maxCardsPerTopic: number;
 		maxTotalCards: number;
 	} | null;
+	blocks: SidebarBlockAnalysisItem[];
 	topics: SidebarTopicAnalysisItem[];
 }
 
 export function buildSidebarAnalysisSnapshot(
 	metadata: PersistedDocumentMetadata,
 	cards: ExistingCardEntry[],
+	content: string,
 ): SidebarAnalysisSnapshot | null {
 	const persistedTopics = metadata.topics?.topics ?? [];
 	const budgetPlan = metadata.topicPlan?.budgetPlan ?? null;
 	const generationMeta = metadata.generationMeta;
+	const blockAnnotations = collectKnowledgeAnnotations(content);
 
-	if (persistedTopics.length === 0 && budgetPlan === null && generationMeta === null) {
+	if (persistedTopics.length === 0 && budgetPlan === null && generationMeta === null && blockAnnotations.length === 0) {
 		return null;
 	}
 
@@ -72,6 +93,24 @@ export function buildSidebarAnalysisSnapshot(
 	for (const selectedTopic of budgetPlan?.selectedTopics ?? []) {
 		plannedCountByTopicId.set(selectedTopic.topicId, selectedTopic.cardCount);
 	}
+
+	const blocks = blockAnnotations.map((annotation, index) => ({
+		blockIndex: index + 1,
+		status: annotation.data.status,
+		summary: annotation.data.summary,
+		topicHint: annotation.data.topicHint,
+		evidenceExcerpt: annotation.data.evidenceExcerpt,
+		rejectionReason: annotation.data.rejectionReason,
+		extractedAt: annotation.data.extractedAt,
+		bodyRange: {
+			from: annotation.bodyRange.from,
+			to: annotation.bodyRange.to,
+		},
+		blockRange: {
+			from: annotation.blockRange.from,
+			to: annotation.blockRange.to,
+		},
+	}) satisfies SidebarBlockAnalysisItem);
 
 	const topics = persistedTopics
 		.map((topic) => {
@@ -108,6 +147,7 @@ export function buildSidebarAnalysisSnapshot(
 	const generatedAt = generationMeta?.generatedAt
 		|| metadata.topics?.generatedAt
 		|| metadata.topicPlan?.generatedAt
+		|| blocks.find((block) => block.extractedAt.trim().length > 0)?.extractedAt
 		|| "";
 	const uniqueChunkCount = new Set(
 		persistedTopics.flatMap((topic) => topic.memberChunkIds),
@@ -119,6 +159,9 @@ export function buildSidebarAnalysisSnapshot(
 		model: generationMeta?.provider?.model ?? "",
 		promptSource: generationMeta?.prompt?.source ?? "",
 		knowledgeChunkCount: generationMeta?.knowledgeChunkCount ?? uniqueChunkCount,
+		blockCount: blocks.length,
+		knowledgeBlockCount: blocks.filter((block) => block.status === "knowledge").length,
+		skippedBlockCount: blocks.filter((block) => block.status === "no-knowledge").length,
 		topicCount: persistedTopics.length || generationMeta?.topicCount || 0,
 		coreTopicCount: topics.filter((topic) => topic.tier === "core").length,
 		secondaryTopicCount: topics.filter((topic) => topic.tier === "secondary").length,
@@ -135,6 +178,7 @@ export function buildSidebarAnalysisSnapshot(
 				maxTotalCards: budgetPlan.maxTotalCards,
 			}
 			: null,
+		blocks,
 		topics,
 	};
 }

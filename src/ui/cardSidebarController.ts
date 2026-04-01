@@ -1,7 +1,7 @@
 import { MarkdownView, Notice, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 
 import type ObcdPlugin from "../main";
-import type { ExistingCardEntry, GenerationProgressState } from "../types";
+import type { ExistingCardEntry, GenerationProgressState, TextRange } from "../types";
 import { buildSidebarAnalysisSnapshot, type SidebarAnalysisSnapshot } from "./sidebarAnalysis";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import { readDocumentMetadata } from "../writing/documentMetadataWriter";
@@ -90,6 +90,11 @@ export class CardSidebarController {
 				: {
 					...this.analysis,
 					budget: this.analysis.budget === null ? null : { ...this.analysis.budget },
+					blocks: this.analysis.blocks.map((block) => ({
+						...block,
+						bodyRange: { ...block.bodyRange },
+						blockRange: { ...block.blockRange },
+					})),
 					topics: this.analysis.topics.map((topic) => ({ ...topic })),
 				},
 			generationProgress: this.generationProgress === null ? null : { ...this.generationProgress },
@@ -147,16 +152,28 @@ export class CardSidebarController {
 	}
 
 	async revealCard(card: ExistingCardEntry): Promise<void> {
+		await this.revealRange(card.file, card.range);
+	}
+
+	async revealBlock(range: TextRange): Promise<void> {
+		if (!isMarkdownFile(this.activeFile)) {
+			return;
+		}
+
+		await this.revealRange(this.activeFile, range);
+	}
+
+	private async revealRange(file: TFile, range: TextRange): Promise<void> {
 		const leaf = this.plugin.app.workspace.getMostRecentLeaf() ?? this.plugin.app.workspace.getLeaf(false);
-		await leaf.openFile(card.file);
+		await leaf.openFile(file);
 		this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
 
 		if (!(leaf.view instanceof MarkdownView)) {
 			return;
 		}
 
-		const from = leaf.view.editor.offsetToPos(card.range.from);
-		const to = leaf.view.editor.offsetToPos(card.range.to);
+		const from = leaf.view.editor.offsetToPos(range.from);
+		const to = leaf.view.editor.offsetToPos(range.to);
 		leaf.view.editor.setSelection(from, to);
 		leaf.view.editor.scrollIntoView({ from, to }, true);
 	}
@@ -344,8 +361,9 @@ export class CardSidebarController {
 
 		this.existingCards = collectExistingCardEntries(file, content);
 		this.analysis = buildSidebarAnalysisSnapshot(
-			readDocumentMetadata(this.plugin.app, file),
+			readDocumentMetadata(this.plugin.app, file, content),
 			this.existingCards,
+			content,
 		);
 		this.isRefreshingFile = false;
 		this.notify();

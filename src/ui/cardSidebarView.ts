@@ -14,7 +14,11 @@ import type {
 } from "../types";
 import { makePreview } from "../utils/markdown";
 import { OBCD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
-import type { SidebarAnalysisSnapshot, SidebarTopicAnalysisItem } from "./sidebarAnalysis";
+import type {
+	SidebarAnalysisSnapshot,
+	SidebarBlockAnalysisItem,
+	SidebarTopicAnalysisItem,
+} from "./sidebarAnalysis";
 import {
 	findSidebarTableColumn,
 	getSearchableCardValues,
@@ -46,6 +50,9 @@ export class CardSidebarView extends ItemView {
 	private pendingSingleDeleteCardId: string | null = null;
 	private isBulkDeleteConfirmationPending = false;
 	private renderedDisplayFilePath: string | null = null;
+	private isTopicSectionExpanded = true;
+	private isBlockSectionExpanded = true;
+	private isFlashcardSectionExpanded = true;
 
 	constructor(leaf: WorkspaceLeaf, plugin: ObcdPlugin) {
 		super(leaf);
@@ -118,9 +125,9 @@ export class CardSidebarView extends ItemView {
 			isGeneratingCurrentFile: state.generationProgress !== null,
 		});
 
-		this.renderAnalysisSection(rootEl, state.analysis);
-		this.renderSearchBar(rootEl);
-		this.renderInsertedSection(rootEl, state.existingCards, state);
+		this.renderFlashcardsSection(rootEl, state.existingCards, state);
+		this.renderTopicSection(rootEl, state.analysis);
+		this.renderBlockSection(rootEl, state.analysis);
 	}
 
 	private syncInsertedSelection(displayFilePath: string | null, cards: ExistingCardEntry[]): void {
@@ -244,19 +251,18 @@ export class CardSidebarView extends ItemView {
 		generateButton.buttonEl.setAttr("title", `Generate flashcards for ${state.path}.`);
 	}
 
-	private renderAnalysisSection(containerEl: HTMLElement, analysis: SidebarAnalysisSnapshot | null): void {
-		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
-		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
-		headerEl.createEl("h4", {
-			cls: "obcd-sidebar-section-title",
-			text: "Topic analysis",
+	private renderTopicSection(containerEl: HTMLElement, analysis: SidebarAnalysisSnapshot | null): void {
+		const sectionEl = this.createCollapsibleSection(containerEl, {
+			title: "Topic",
+			detail: this.getTopicSectionSummary(analysis),
+			isOpen: this.isTopicSectionExpanded,
+			onToggle: (isOpen) => {
+				this.isTopicSectionExpanded = isOpen;
+			},
 		});
 
 		if (analysis === null) {
-			sectionEl.createEl("p", {
-				cls: "obcd-sidebar-empty",
-				text: "No saved topic analysis was found in the note front matter.",
-			});
+			this.renderEmptyState(sectionEl, "No saved topic analysis was found in the note front matter.");
 			return;
 		}
 
@@ -295,23 +301,61 @@ export class CardSidebarView extends ItemView {
 		}
 
 		if (analysis.topics.length === 0) {
-			sectionEl.createEl("p", {
-				cls: "obcd-sidebar-empty",
-				text: "This note has generation metadata, but no topic list was saved.",
-			});
+			this.renderEmptyState(sectionEl, "This note has generation metadata, but no topic list was saved.");
 			return;
 		}
 
-		const detailsEl = sectionEl.createEl("details", { cls: "obcd-sidebar-analysis-topics" });
-		detailsEl.open = analysis.topics.length <= 4;
-		detailsEl.createEl("summary", {
-			text: this.getTopicListSummaryLabel(analysis),
-		});
-
-		const topicListEl = detailsEl.createDiv({ cls: "obcd-sidebar-analysis-list" });
+		const topicListEl = sectionEl.createDiv({ cls: "obcd-sidebar-analysis-list" });
 		for (const topic of analysis.topics) {
 			this.renderTopicAnalysisCard(topicListEl, topic);
 		}
+	}
+
+	private renderBlockSection(containerEl: HTMLElement, analysis: SidebarAnalysisSnapshot | null): void {
+		const sectionEl = this.createCollapsibleSection(containerEl, {
+			title: "Blocks",
+			detail: this.getBlockSectionSummary(analysis),
+			isOpen: this.isBlockSectionExpanded,
+			onToggle: (isOpen) => {
+				this.isBlockSectionExpanded = isOpen;
+			},
+		});
+
+		if (analysis === null || analysis.blocks.length === 0) {
+			this.renderEmptyState(sectionEl, "No saved block analysis was found in the note body.");
+			return;
+		}
+
+		const summaryEl = sectionEl.createDiv({ cls: "obcd-sidebar-card obcd-sidebar-analysis-summary" });
+		const chipsEl = summaryEl.createDiv({ cls: "obcd-sidebar-chips" });
+		this.createAnalysisChip(chipsEl, `Blocks ${analysis.blockCount}`);
+		this.createAnalysisChip(chipsEl, `Knowledge ${analysis.knowledgeBlockCount}`);
+		if (analysis.skippedBlockCount > 0) {
+			this.createAnalysisChip(chipsEl, `Skipped ${analysis.skippedBlockCount}`);
+		}
+
+		const listEl = sectionEl.createDiv({ cls: "obcd-sidebar-analysis-list" });
+		for (const block of analysis.blocks) {
+			this.renderBlockAnalysisCard(listEl, block);
+		}
+	}
+
+	private renderFlashcardsSection(
+		containerEl: HTMLElement,
+		cards: ExistingCardEntry[],
+		state: CardSidebarSnapshot,
+	): void {
+		const sectionEl = this.createCollapsibleSection(containerEl, {
+			title: "Flashcards",
+			detail: this.getFlashcardSectionSummary(cards),
+			isOpen: this.isFlashcardSectionExpanded,
+			onToggle: (isOpen) => {
+				this.isFlashcardSectionExpanded = isOpen;
+			},
+		});
+
+		this.renderSearchBar(sectionEl);
+		this.renderInsertedSection(sectionEl, cards, state);
 	}
 
 	private renderTopicAnalysisCard(containerEl: HTMLElement, topic: SidebarTopicAnalysisItem): void {
@@ -359,6 +403,79 @@ export class CardSidebarView extends ItemView {
 			});
 			reasonEl.setAttr("title", topic.rejectionReason);
 		}
+	}
+
+	private renderBlockAnalysisCard(containerEl: HTMLElement, block: SidebarBlockAnalysisItem): void {
+		const cardEl = containerEl.createDiv({ cls: "obcd-sidebar-card obcd-sidebar-analysis-card" });
+		cardEl.addClass(`is-${block.status === "knowledge" ? "planned" : "analysis-only"}`);
+		cardEl.addClass("is-selectable");
+		cardEl.tabIndex = 0;
+		cardEl.setAttr("aria-label", `Reveal source block ${block.blockIndex}`);
+		this.bindBlockAnalysisInteraction(cardEl, block);
+
+		const chipsEl = cardEl.createDiv({ cls: "obcd-sidebar-chips" });
+		this.createAnalysisChip(
+			chipsEl,
+			block.status === "knowledge" ? "Knowledge block" : "Skipped block",
+			`obcd-sidebar-analysis-status is-${block.status === "knowledge" ? "planned" : "analysis-only"}`,
+		);
+		this.createAnalysisChip(chipsEl, `Block ${block.blockIndex}`);
+		if (block.topicHint.trim().length > 0) {
+			this.createAnalysisChip(chipsEl, block.topicHint);
+		}
+
+		const summaryEl = cardEl.createEl("strong", {
+			cls: "obcd-sidebar-analysis-statement",
+			text: makePreview(block.summary, 140),
+		});
+		summaryEl.setAttr("title", block.summary);
+
+		if (block.evidenceExcerpt.trim().length > 0) {
+			const evidenceEl = cardEl.createEl("p", {
+				cls: "obcd-sidebar-analysis-summary-text",
+				text: makePreview(block.evidenceExcerpt, 180),
+			});
+			evidenceEl.setAttr("title", block.evidenceExcerpt);
+		}
+
+		if (block.status === "no-knowledge" && block.rejectionReason.trim().length > 0) {
+			const reasonEl = cardEl.createEl("p", {
+				cls: "obcd-sidebar-note",
+				text: block.rejectionReason,
+			});
+			reasonEl.setAttr("title", block.rejectionReason);
+		}
+
+		const extractedLabel = this.formatTimestamp(block.extractedAt);
+		if (extractedLabel.length > 0) {
+			cardEl.createEl("p", {
+				cls: "obcd-sidebar-subtle",
+				text: `Extracted ${extractedLabel}`,
+			});
+		}
+	}
+
+	private bindBlockAnalysisInteraction(cardEl: HTMLElement, block: SidebarBlockAnalysisItem): void {
+		cardEl.addEventListener("click", (event) => {
+			if (this.isInteractiveEventTarget(event.target)) {
+				return;
+			}
+
+			void this.plugin.sidebar.revealBlock(block.bodyRange);
+		});
+
+		cardEl.addEventListener("keydown", (event) => {
+			if (this.isInteractiveEventTarget(event.target)) {
+				return;
+			}
+
+			if (event.key !== "Enter" && event.key !== " ") {
+				return;
+			}
+
+			event.preventDefault();
+			void this.plugin.sidebar.revealBlock(block.bodyRange);
+		});
 	}
 
 	private renderSearchBar(containerEl: HTMLElement): void {
@@ -830,6 +947,36 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
+	private createCollapsibleSection(
+		containerEl: HTMLElement,
+		options: {
+			title: string;
+			detail: string;
+			isOpen: boolean;
+			onToggle: (isOpen: boolean) => void;
+		},
+	): HTMLElement {
+		const detailsEl = containerEl.createEl("details", { cls: "obcd-sidebar-region" });
+		detailsEl.open = options.isOpen;
+		detailsEl.addEventListener("toggle", () => {
+			options.onToggle(detailsEl.open);
+		});
+
+		const summaryEl = detailsEl.createEl("summary", { cls: "obcd-sidebar-region-summary" });
+		summaryEl.createEl("span", {
+			cls: "obcd-sidebar-region-title",
+			text: options.title,
+		});
+		if (options.detail.trim().length > 0) {
+			summaryEl.createEl("span", {
+				cls: "obcd-sidebar-region-detail",
+				text: options.detail,
+			});
+		}
+
+		return detailsEl.createDiv({ cls: "obcd-sidebar-region-body" });
+	}
+
 	private createAnalysisChip(containerEl: HTMLElement, text: string, extraClass = ""): void {
 		const chipEl = containerEl.createEl("span", {
 			cls: "obcd-sidebar-chip",
@@ -905,12 +1052,41 @@ export class CardSidebarView extends ItemView {
 		return parts.join(" • ");
 	}
 
-	private getTopicListSummaryLabel(analysis: SidebarAnalysisSnapshot): string {
-		if (analysis.plannedTopicCount === 0) {
-			return `Topics (${analysis.topicCount})`;
+	private getTopicSectionSummary(analysis: SidebarAnalysisSnapshot | null): string {
+		if (analysis === null || analysis.topicCount === 0) {
+			return "No topics";
 		}
 
-		return `Topics (${analysis.topicCount}) • Planned ${analysis.plannedTopicCount}`;
+		if (analysis.plannedTopicCount === 0) {
+			return `${analysis.topicCount} topics`;
+		}
+
+		return `${analysis.topicCount} topics • ${analysis.plannedTopicCount} planned`;
+	}
+
+	private getBlockSectionSummary(analysis: SidebarAnalysisSnapshot | null): string {
+		if (analysis === null || analysis.blockCount === 0) {
+			return "No blocks";
+		}
+
+		if (analysis.skippedBlockCount === 0) {
+			return `${analysis.blockCount} blocks`;
+		}
+
+		return `${analysis.blockCount} blocks • ${analysis.skippedBlockCount} skipped`;
+	}
+
+	private getFlashcardSectionSummary(cards: ExistingCardEntry[]): string {
+		if (cards.length === 0) {
+			return "No cards";
+		}
+
+		const generatedCount = cards.filter((card) => card.isPluginGenerated).length;
+		if (generatedCount === 0) {
+			return `${cards.length} cards`;
+		}
+
+		return `${cards.length} cards • ${generatedCount} generated`;
 	}
 
 	private getTopicStatusLabel(topic: SidebarTopicAnalysisItem): string {
