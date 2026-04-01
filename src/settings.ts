@@ -21,9 +21,17 @@ import {
 	normalizeConfiguredFolderPath,
 	normalizeConfiguredTemplatePath,
 } from "./prompts/promptResolver";
+import {
+	DEFAULT_CARD_COMPOSITION_PROMPT_TEMPLATE,
+	DEFAULT_GLOBAL_RANKING_PROMPT_TEMPLATE,
+	DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE,
+	LEGACY_CARD_COMPOSITION_PROMPT_TEMPLATE,
+	LEGACY_GLOBAL_RANKING_PROMPT_TEMPLATE,
+	LEGACY_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE,
+} from "./prompts/promptDefaults";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 13;
+const SETTINGS_SCHEMA_VERSION = 15;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
 export type RegenerationPolicy = "full-document-rebuild" | "scope-rebuild";
@@ -69,6 +77,9 @@ export interface ObcdFolderPromptRule {
 }
 
 export interface ObcdPromptSettings {
+	knowledgeExtractionPrompt: string;
+	globalRankingPrompt: string;
+	cardCompositionPrompt: string;
 	globalPrompt: string;
 	templatesFolder: string;
 	folderRules: ObcdFolderPromptRule[];
@@ -108,6 +119,9 @@ export const DEFAULT_SIDEBAR_SETTINGS: ObcdSidebarSettings = {
 };
 
 export const DEFAULT_PROMPT_SETTINGS: ObcdPromptSettings = {
+	knowledgeExtractionPrompt: DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE,
+	globalRankingPrompt: DEFAULT_GLOBAL_RANKING_PROMPT_TEMPLATE,
+	cardCompositionPrompt: DEFAULT_CARD_COMPOSITION_PROMPT_TEMPLATE,
 	globalPrompt: "",
 	templatesFolder: "",
 	folderRules: [],
@@ -502,12 +516,63 @@ export class ObcdSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("提示词")
-			.setDesc("配置会追加到分块分析、知识点归并和制卡阶段的共享提示词。")
+			.setDesc("配置可编辑的内置系统提示词，以及会追加到各阶段末尾的共享附加提示词。")
 			.setHeading();
 
+		this.addPromptTemplateSetting(containerEl, {
+			name: "分块分析系统提示词",
+			description: "用于判断一个知识块是否值得进入后续主题归并。留空会恢复默认模板。",
+			value: this.plugin.settings.prompts.knowledgeExtractionPrompt,
+			defaultValue: DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE,
+			placeholder: "用于抽取阶段的系统提示词模板",
+			rows: 12,
+			onChange: async (value) => {
+				this.plugin.settings.prompts.knowledgeExtractionPrompt = value;
+				await this.plugin.saveSettings();
+			},
+			onReset: async () => {
+				this.plugin.settings.prompts.knowledgeExtractionPrompt = DEFAULT_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE;
+				await this.plugin.saveSettings();
+			},
+		});
+
+		this.addPromptTemplateSetting(containerEl, {
+			name: "知识归并系统提示词",
+			description: "用于把分块分析合并成知识主题。可用变量：{{coreCardBudget}}、{{secondaryCardBudget}}、{{maxTotalCardsPerDocument}}、{{maxCardsPerTopic}}。留空会恢复默认模板。",
+			value: this.plugin.settings.prompts.globalRankingPrompt,
+			defaultValue: DEFAULT_GLOBAL_RANKING_PROMPT_TEMPLATE,
+			placeholder: "用于知识归并阶段的系统提示词模板",
+			rows: 12,
+			onChange: async (value) => {
+				this.plugin.settings.prompts.globalRankingPrompt = value;
+				await this.plugin.saveSettings();
+			},
+			onReset: async () => {
+				this.plugin.settings.prompts.globalRankingPrompt = DEFAULT_GLOBAL_RANKING_PROMPT_TEMPLATE;
+				await this.plugin.saveSettings();
+			},
+		});
+
+		this.addPromptTemplateSetting(containerEl, {
+			name: "制卡系统提示词",
+			description: "用于生成最终 BASIC 卡片。可用变量：{{cardCount}}。留空会恢复默认模板。",
+			value: this.plugin.settings.prompts.cardCompositionPrompt,
+			defaultValue: DEFAULT_CARD_COMPOSITION_PROMPT_TEMPLATE,
+			placeholder: "用于最终制卡阶段的系统提示词模板",
+			rows: 12,
+			onChange: async (value) => {
+				this.plugin.settings.prompts.cardCompositionPrompt = value;
+				await this.plugin.saveSettings();
+			},
+			onReset: async () => {
+				this.plugin.settings.prompts.cardCompositionPrompt = DEFAULT_CARD_COMPOSITION_PROMPT_TEMPLATE;
+				await this.plugin.saveSettings();
+			},
+		});
+
 		new Setting(containerEl)
-			.setName("全局提示词")
-			.setDesc("当没有任何文件夹规则命中时使用。留空则仅使用插件内置工作流提示词。")
+			.setName("共享附加提示词")
+			.setDesc("当没有任何文件夹规则命中时使用，会追加到分块分析、知识点归并和制卡阶段的系统提示词后面。")
 			.addTextArea((textArea) => {
 				textArea
 					.setPlaceholder("补充这个仓库或知识库的统一生成偏好。")
@@ -683,6 +748,47 @@ export class ObcdSettingTab extends PluginSettingTab {
 		}
 	}
 
+	private addPromptTemplateSetting(
+		containerEl: HTMLElement,
+		options: {
+			name: string;
+			description: string;
+			value: string;
+			defaultValue: string;
+			placeholder: string;
+			rows: number;
+			onChange: (value: string) => Promise<void>;
+			onReset: () => Promise<void>;
+		},
+	): void {
+		new Setting(containerEl)
+			.setName(options.name)
+			.setDesc(options.description)
+			.addTextArea((textArea) => {
+				textArea
+					.setPlaceholder(options.placeholder)
+					.setValue(options.value)
+					.onChange(async (value) => {
+						await options.onChange(value.replace(/\r\n/g, "\n"));
+					});
+
+				textArea.inputEl.rows = options.rows;
+				textArea.inputEl.cols = 40;
+			})
+			.addExtraButton((button) => button
+				.setIcon("rotate-ccw")
+				.setTooltip("恢复默认提示词")
+				.onClick(async () => {
+					await options.onReset();
+					this.display();
+				}));
+
+		containerEl.createEl("p", {
+			cls: "obcd-settings-hint",
+			text: `默认模板共 ${options.defaultValue.split("\n").length} 行，支持在此基础上按需修改。`,
+		});
+	}
+
 	private async updateActiveProviderSettings(
 		update: (provider: FlashcardProvider) => FlashcardProvider,
 		options: { redisplay?: boolean } = {},
@@ -807,6 +913,21 @@ function parsePromptSettings(value: unknown, fallback: ObcdPromptSettings): Obcd
 	const promptSource = isRecord(value) ? value : {};
 
 	return {
+		knowledgeExtractionPrompt: readPromptTemplate(
+			promptSource.knowledgeExtractionPrompt,
+			fallback.knowledgeExtractionPrompt,
+			[LEGACY_KNOWLEDGE_EXTRACTION_PROMPT_TEMPLATE],
+		),
+		globalRankingPrompt: readPromptTemplate(
+			promptSource.globalRankingPrompt,
+			fallback.globalRankingPrompt,
+			[LEGACY_GLOBAL_RANKING_PROMPT_TEMPLATE],
+		),
+		cardCompositionPrompt: readPromptTemplate(
+			promptSource.cardCompositionPrompt,
+			fallback.cardCompositionPrompt,
+			[LEGACY_CARD_COMPOSITION_PROMPT_TEMPLATE],
+		),
 		globalPrompt: readString(promptSource.globalPrompt, fallback.globalPrompt),
 		templatesFolder: normalizeConfiguredFolderPath(readString(promptSource.templatesFolder, fallback.templatesFolder)),
 		folderRules: parseFolderPromptRules(promptSource.folderRules),
@@ -878,6 +999,24 @@ function readRegenerationPolicy(value: unknown, fallback: RegenerationPolicy): R
 
 function readString(value: unknown, fallback: string): string {
 	return typeof value === "string" ? value : fallback;
+}
+
+function readPromptTemplate(value: unknown, fallback: string, legacyDefaults: string[] = []): string {
+	if (typeof value !== "string") {
+		return fallback;
+	}
+
+	const normalizedValue = value.replace(/\r\n/g, "\n");
+	if (normalizedValue.trim().length === 0) {
+		return fallback;
+	}
+
+	const normalizedLegacyDefaults = legacyDefaults.map((item) => item.replace(/\r\n/g, "\n").trim());
+	if (normalizedLegacyDefaults.includes(normalizedValue.trim())) {
+		return fallback;
+	}
+
+	return normalizedValue;
 }
 
 function normalizeConfiguredDefaultTag(value: unknown, fallback: string): string {

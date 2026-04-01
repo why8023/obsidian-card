@@ -42,7 +42,7 @@ export class GlobalRanker {
 						secondaryCardBudget: this.settings.generation.secondaryCardBudget,
 						maxTotalCardsPerDocument: this.settings.generation.maxTotalCardsPerDocument,
 						maxCardsPerTopic: this.settings.generation.maxCardsPerTopic,
-					}, this.customInstruction),
+					}, this.settings.prompts.globalRankingPrompt, this.customInstruction),
 				},
 				{
 					role: "user",

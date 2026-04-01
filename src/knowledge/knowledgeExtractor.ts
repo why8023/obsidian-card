@@ -38,7 +38,10 @@ export class KnowledgeExtractor {
 		const payload = await this.llmClient.requestJson(`extract:${chunkIndex}`, [
 			{
 				role: "system",
-				content: buildKnowledgeExtractionPrompt(this.customInstruction),
+				content: buildKnowledgeExtractionPrompt(
+					this.settings.prompts.knowledgeExtractionPrompt,
+					this.customInstruction,
+				),
 			},
 			{
 				role: "user",

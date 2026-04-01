@@ -23,7 +23,7 @@ export class CardComposer {
 				role: "system",
 				content: buildCardCompositionPrompt({
 					cardCount: request.cardCount,
-				}, this.customInstruction),
+				}, this.settings.prompts.cardCompositionPrompt, this.customInstruction),
 			},
 			{
 				role: "user",
