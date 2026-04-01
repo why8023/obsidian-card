@@ -99,6 +99,7 @@ export class FlashcardWorkflow {
 
 			const content = await this.loadFileContent(target.file);
 			const chunks = buildFileChunks(target.file, content, {
+				protectedBlockRules: this.plugin.settings.generation.protectedBlockRules,
 				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
 			});
 			const progressContext = {
@@ -120,6 +121,7 @@ export class FlashcardWorkflow {
 
 			const fullContent = editor.getValue();
 			const chunks = buildFileChunks(target.file, fullContent, {
+				protectedBlockRules: this.plugin.settings.generation.protectedBlockRules,
 				targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
 				upToOffset: target.cursorOffset,
 			});
@@ -156,6 +158,7 @@ export class FlashcardWorkflow {
 				try {
 					const content = await this.loadFileContent(file);
 					const chunks = buildFileChunks(file, content, {
+						protectedBlockRules: this.plugin.settings.generation.protectedBlockRules,
 						targetChunkCharacters: this.plugin.settings.generation.targetChunkCharacters,
 					});
 					const progressContext = {

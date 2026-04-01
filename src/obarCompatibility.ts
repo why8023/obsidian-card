@@ -4,10 +4,6 @@ const OBAR_CUSTOM_NOTE_START_PATTERN =
 	/<!--\s*obar-note-start:([A-Za-z0-9-]+)\s*-->/g;
 const OBAR_CUSTOM_NOTE_END_PATTERN =
 	/<!--\s*obar-note-end:([A-Za-z0-9-]+)\s*-->/g;
-const OBAR_RECORD_START_PATTERN =
-	/<!--\s*obar-record-start:/g;
-const OBAR_RECORD_END_PATTERN =
-	/<!--\s*obar-record-end\s*-->/g;
 const OBAR_NOTE_ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const DEFAULT_OBAR_NOTE_ID_LENGTH = 12;
 
@@ -96,44 +92,6 @@ export function expandRangeToIncludeObarCustomNote(content: string, range: TextR
 	};
 }
 
-export function collectObarRecordRanges(content: string): TextRange[] {
-	const ranges: TextRange[] = [];
-	let searchOffset = 0;
-
-	while (searchOffset < content.length) {
-		const recordStart = findNextObarRecordStart(content, searchOffset);
-		if (recordStart === -1) {
-			break;
-		}
-
-		const recordStartCommentEnd = content.indexOf("-->", recordStart);
-		if (recordStartCommentEnd === -1) {
-			ranges.push({
-				from: recordStart,
-				to: content.length,
-			});
-			break;
-		}
-
-		const recordEnd = findFirstMarkerAfter(content, OBAR_RECORD_END_PATTERN, recordStartCommentEnd + 3, "");
-		if (recordEnd === null) {
-			ranges.push({
-				from: recordStart,
-				to: content.length,
-			});
-			break;
-		}
-
-		ranges.push({
-			from: recordStart,
-			to: recordEnd.end,
-		});
-		searchOffset = recordEnd.end;
-	}
-
-	return ranges;
-}
-
 function extractFrontmatter(content: string): string | null {
 	const match = content.match(/^---\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)(?:\r?\n|$)/);
 	return match?.[1] ?? null;
@@ -202,12 +160,6 @@ function findFirstMarkerAfter(content: string, pattern: RegExp, offset: number, 
 	}
 
 	return null;
-}
-
-function findNextObarRecordStart(content: string, offset: number): number {
-	OBAR_RECORD_START_PATTERN.lastIndex = offset;
-	const match = OBAR_RECORD_START_PATTERN.exec(content);
-	return match?.index ?? -1;
 }
 
 function escapeRegExp(value: string): string {

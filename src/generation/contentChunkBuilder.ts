@@ -1,7 +1,11 @@
 import type { TFile } from "obsidian";
 
+import {
+	DEFAULT_PROTECTED_BLOCK_RULES,
+	collectProtectedBlockRanges,
+	type ProtectedBlockRule,
+} from "./protectedBlockRules";
 import { collectKnowledgeAnnotations, stripKnowledgeAnnotationMarkers } from "../knowledge/knowledgeAnnotations";
-import { collectObarRecordRanges } from "../obarCompatibility";
 import type { ContentChunk, ExistingKnowledgeAnnotation, TextRange } from "../types";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
 import {
@@ -17,11 +21,13 @@ import {
 interface BuildFileChunksOptions {
 	upToOffset?: number;
 	targetChunkCharacters?: number;
+	protectedBlockRules?: ProtectedBlockRule[];
 }
 
 interface CandidateBlock {
 	range: TextRange;
 	text: string;
+	isProtected: boolean;
 }
 
 const DEFAULT_TARGET_CHUNK_CHARACTERS = 900;
@@ -57,8 +63,11 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 	const contentStart = findFrontmatterEnd(content);
 	const existingAnnotations = collectKnowledgeAnnotations(content);
 	const cardRanges = collectExistingCardEntries(file, content).map((entry) => entry.blockRange);
-	const obarRecordRanges = collectObarRecordRanges(content);
-	const atomicBlocks = collectAtomicBlocks(content, cardRanges, obarRecordRanges, contentStart);
+	const protectedBlockRanges = collectProtectedBlockRanges(
+		content,
+		options.protectedBlockRules ?? DEFAULT_PROTECTED_BLOCK_RULES,
+	);
+	const atomicBlocks = collectAtomicBlocks(content, cardRanges, protectedBlockRanges, contentStart);
 	const mergedBlocks = mergeBlocksByTargetSize(atomicBlocks, targetChunkCharacters);
 	const chunks = materializeChunks(file, content, mergedBlocks, existingAnnotations);
 	return filterChunksByOffset(chunks, options.upToOffset);
@@ -67,7 +76,7 @@ export function buildFileChunks(file: TFile, content: string, options: BuildFile
 function collectAtomicBlocks(
 	content: string,
 	cardRanges: TextRange[],
-	obarRecordRanges: TextRange[],
+	protectedBlockRanges: TextRange[],
 	contentStart: number,
 ): CandidateBlock[] {
 	const lines = collectLineInfos(content);
@@ -97,6 +106,7 @@ function collectAtomicBlocks(
 				to: trimmed.to,
 			},
 			text: trimmed.text,
+			isProtected: false,
 		});
 
 		activeBlockStart = null;
@@ -109,14 +119,14 @@ function collectAtomicBlocks(
 			break;
 		}
 
-		const coveringObarRecordRange = findCoveringRange(obarRecordRanges, line.start);
-		if (coveringObarRecordRange) {
+		const coveringProtectedBlockRange = findCoveringRange(protectedBlockRanges, line.start);
+		if (coveringProtectedBlockRange) {
 			flushActiveBlock();
-			const protectedBlock = createProtectedBlock(content, coveringObarRecordRange, cardRanges);
+			const protectedBlock = createProtectedBlock(content, coveringProtectedBlockRange, cardRanges);
 			if (protectedBlock) {
 				blocks.push(protectedBlock);
 			}
-			lineIndex = advancePastOffset(lines, coveringObarRecordRange.to, lineIndex);
+			lineIndex = advancePastOffset(lines, coveringProtectedBlockRange.to, lineIndex);
 			fenceMarker = null;
 			continue;
 		}
@@ -186,6 +196,7 @@ function createProtectedBlock(content: string, range: TextRange, excludedRanges:
 			to: range.to,
 		},
 		text,
+		isProtected: true,
 	};
 }
 
@@ -198,6 +209,12 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 	let current = cloneBlock(blocks[0]!);
 
 	for (const nextBlock of blocks.slice(1)) {
+		if (current.isProtected || nextBlock.isProtected) {
+			merged.push(current);
+			current = cloneBlock(nextBlock);
+			continue;
+		}
+
 		const mergedLength = current.text.length + 2 + nextBlock.text.length;
 		if (mergedLength > targetChunkCharacters) {
 			merged.push(current);
@@ -211,6 +228,7 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 				to: nextBlock.range.to,
 			},
 			text: `${current.text}\n\n${nextBlock.text}`,
+			isProtected: false,
 		};
 	}
 
@@ -263,6 +281,7 @@ function cloneBlock(block: CandidateBlock): CandidateBlock {
 			to: block.range.to,
 		},
 		text: block.text,
+		isProtected: block.isProtected,
 	};
 }
 

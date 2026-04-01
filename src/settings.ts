@@ -1,6 +1,12 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 
 import { getDebugArtifactsDirectory } from "./debug/debugService";
+import {
+	DEFAULT_PROTECTED_BLOCK_RULES,
+	cloneProtectedBlockRules,
+	normalizeProtectedBlockRules,
+	type ProtectedBlockRule,
+} from "./generation/protectedBlockRules";
 import { LlmClient } from "./generation/llmClient";
 import type ObcdPlugin from "./main";
 import {
@@ -31,7 +37,7 @@ import {
 } from "./prompts/promptDefaults";
 import { SIDEBAR_TABLE_COLUMN_IDS, type SidebarTableColumnId } from "./types";
 
-const SETTINGS_SCHEMA_VERSION = 15;
+const SETTINGS_SCHEMA_VERSION = 16;
 export const DEFAULT_GENERATED_CARD_TAG = "OBCD";
 
 export type RegenerationPolicy = "full-document-rebuild" | "scope-rebuild";
@@ -47,6 +53,7 @@ export interface FlashcardGenerationSettings {
 	maxTotalCardsPerDocument: number;
 	maxCardsPerTopic: number;
 	targetChunkCharacters: number;
+	protectedBlockRules: ProtectedBlockRule[];
 	maxTaskInputTokens: number;
 	maxTaskChunks: number;
 	maxTaskLlmCalls: number;
@@ -107,6 +114,7 @@ export const DEFAULT_GENERATION_SETTINGS: FlashcardGenerationSettings = {
 	maxTotalCardsPerDocument: 10,
 	maxCardsPerTopic: 2,
 	targetChunkCharacters: 900,
+	protectedBlockRules: cloneProtectedBlockRules(DEFAULT_PROTECTED_BLOCK_RULES),
 	maxTaskInputTokens: 22000,
 	maxTaskChunks: 36,
 	maxTaskLlmCalls: 48,
@@ -147,6 +155,7 @@ export function createDefaultSettings(): ObcdSettings {
 		activeProviderId: "primary",
 		generation: {
 			...DEFAULT_GENERATION_SETTINGS,
+			protectedBlockRules: cloneProtectedBlockRules(DEFAULT_GENERATION_SETTINGS.protectedBlockRules),
 		},
 		prompts: {
 			...DEFAULT_PROMPT_SETTINGS,
@@ -402,6 +411,79 @@ export class ObcdSettingTab extends PluginSettingTab {
 						this.plugin.settings.generation.targetChunkCharacters = parsedValue;
 					},
 				)));
+
+		new Setting(containerEl)
+			.setName("完整块规则")
+			.setDesc("命中起始和结束正则之间的内容会整体视作一个知识块，不再与相邻文本合并；即使长度超过目标长度，也会整体请求。")
+			.addButton((button) => button
+				.setButtonText("添加规则")
+				.onClick(async () => {
+					this.plugin.settings.generation.protectedBlockRules = [
+						...this.plugin.settings.generation.protectedBlockRules,
+						createEmptyProtectedBlockRule(),
+					];
+					await this.plugin.saveSettings();
+					this.display();
+				}));
+
+		containerEl.createEl("p", {
+			cls: "obcd-settings-hint",
+			text: "正则使用 JavaScript source 语法，不要填写两侧的 /。默认已预置 obar record 规则。",
+		});
+
+		if (this.plugin.settings.generation.protectedBlockRules.length === 0) {
+			containerEl.createEl("p", {
+				cls: "obcd-settings-hint",
+				text: "当前没有完整块规则。正文会完全按普通 chunk 逻辑切分。",
+			});
+		}
+
+		this.plugin.settings.generation.protectedBlockRules.forEach((rule, index) => {
+			new Setting(containerEl)
+				.setName(`完整块规则 ${index + 1} 名称`)
+				.setDesc("只用于设置页展示，方便区分不同格式。")
+				.addText((text) => text
+					.setPlaceholder("Obar record")
+					.setValue(rule.name)
+					.onChange(async (value) => {
+						await this.updateProtectedBlockRule(index, {
+							name: value,
+						});
+					}))
+				.addExtraButton((button) => button
+					.setIcon("trash")
+					.setTooltip("删除完整块规则")
+					.onClick(async () => {
+						this.plugin.settings.generation.protectedBlockRules = this.plugin.settings.generation.protectedBlockRules
+							.filter((_, currentIndex) => currentIndex !== index);
+						await this.plugin.saveSettings();
+						this.display();
+					}));
+
+			new Setting(containerEl)
+				.setName(`完整块规则 ${index + 1} 起始正则`)
+				.setDesc("从这里开始匹配完整块。")
+				.addText((text) => text
+					.setPlaceholder("<!--\\s*obar-record-start:")
+					.setValue(rule.startPattern)
+					.onChange(async (value) => {
+						await this.updateProtectedBlockRule(index, {
+							startPattern: value,
+						});
+					}));
+
+			new Setting(containerEl)
+				.setName(`完整块规则 ${index + 1} 结束正则`)
+				.setDesc("匹配到这里为止；如果正文里找不到结束标识，就会一直包到文件末尾。")
+				.addText((text) => text
+					.setPlaceholder("<!--\\s*obar-record-end\\s*-->")
+					.setValue(rule.endPattern)
+					.onChange(async (value) => {
+						await this.updateProtectedBlockRule(index, {
+							endPattern: value,
+						});
+					}));
+		});
 
 		new Setting(containerEl)
 			.setName("单次任务 token 上限")
@@ -845,6 +927,18 @@ export class ObcdSettingTab extends PluginSettingTab {
 		await this.plugin.saveSettings();
 	}
 
+	private async updateProtectedBlockRule(index: number, update: Partial<ProtectedBlockRule>): Promise<void> {
+		this.plugin.settings.generation.protectedBlockRules = this.plugin.settings.generation.protectedBlockRules.map((rule, currentIndex) => (
+			currentIndex === index
+				? {
+					...rule,
+					...update,
+				}
+				: rule
+		));
+		await this.plugin.saveSettings();
+	}
+
 	private async testProviderConnection(): Promise<void> {
 		const activeProvider = getActiveProvider(this.plugin.settings);
 		const presetInfo = PROVIDER_PRESET_INFO[activeProvider.presetType];
@@ -902,6 +996,7 @@ function parseGenerationSettings(value: unknown, fallback: FlashcardGenerationSe
 		maxTotalCardsPerDocument: readNumber(generationSource.maxTotalCardsPerDocument, fallback.maxTotalCardsPerDocument, { min: 1, max: 80 }),
 		maxCardsPerTopic: readNumber(generationSource.maxCardsPerTopic, fallback.maxCardsPerTopic, { min: 1, max: 5 }),
 		targetChunkCharacters: readNumber(generationSource.targetChunkCharacters, fallback.targetChunkCharacters, { min: 200, max: 4000 }),
+		protectedBlockRules: normalizeProtectedBlockRules(generationSource.protectedBlockRules, fallback.protectedBlockRules),
 		maxTaskInputTokens: readNumber(generationSource.maxTaskInputTokens, fallback.maxTaskInputTokens, { min: 2000, max: 100000 }),
 		maxTaskChunks: readNumber(generationSource.maxTaskChunks, fallback.maxTaskChunks, { min: 1, max: 120 }),
 		maxTaskLlmCalls: readNumber(generationSource.maxTaskLlmCalls, fallback.maxTaskLlmCalls, { min: 3, max: 200 }),
@@ -1097,6 +1192,14 @@ function createEmptyFolderPromptRule(): ObcdFolderPromptRule {
 	return {
 		noteFolder: "",
 		templatePath: "",
+	};
+}
+
+function createEmptyProtectedBlockRule(): ProtectedBlockRule {
+	return {
+		name: "",
+		startPattern: "",
+		endPattern: "",
 	};
 }
 
