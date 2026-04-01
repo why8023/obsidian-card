@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { makePreview } from "../utils/markdown";
 import { OBCD_SIDEBAR_VIEW_TYPE, type CardSidebarSnapshot } from "./cardSidebarController";
+import type { SidebarAnalysisSnapshot, SidebarTopicAnalysisItem } from "./sidebarAnalysis";
 import {
 	findSidebarTableColumn,
 	getSearchableCardValues,
@@ -117,6 +118,7 @@ export class CardSidebarView extends ItemView {
 			isGeneratingCurrentFile: state.generationProgress !== null,
 		});
 
+		this.renderAnalysisSection(rootEl, state.analysis);
 		this.renderSearchBar(rootEl);
 		this.renderInsertedSection(rootEl, state.existingCards, state);
 	}
@@ -242,6 +244,123 @@ export class CardSidebarView extends ItemView {
 		generateButton.buttonEl.setAttr("title", `Generate flashcards for ${state.path}.`);
 	}
 
+	private renderAnalysisSection(containerEl: HTMLElement, analysis: SidebarAnalysisSnapshot | null): void {
+		const sectionEl = containerEl.createDiv({ cls: "obcd-sidebar-section" });
+		const headerEl = sectionEl.createDiv({ cls: "obcd-sidebar-section-header" });
+		headerEl.createEl("h4", {
+			cls: "obcd-sidebar-section-title",
+			text: "Topic analysis",
+		});
+
+		if (analysis === null) {
+			sectionEl.createEl("p", {
+				cls: "obcd-sidebar-empty",
+				text: "No saved topic analysis was found in the note front matter.",
+			});
+			return;
+		}
+
+		const summaryEl = sectionEl.createDiv({ cls: "obcd-sidebar-card obcd-sidebar-analysis-summary" });
+		const chipsEl = summaryEl.createDiv({ cls: "obcd-sidebar-chips" });
+		this.createAnalysisChip(chipsEl, `Chunks ${analysis.knowledgeChunkCount}`);
+		this.createAnalysisChip(chipsEl, `Topics ${analysis.topicCount}`);
+		this.createAnalysisChip(chipsEl, `Planned ${analysis.plannedCardCount}`);
+		this.createAnalysisChip(chipsEl, `Inserted ${analysis.insertedCardCount}`);
+		this.createAnalysisChip(chipsEl, `Core ${analysis.coreTopicCount}`);
+		if (analysis.secondaryTopicCount > 0) {
+			this.createAnalysisChip(chipsEl, `Secondary ${analysis.secondaryTopicCount}`);
+		}
+		if (analysis.analysisOnlyTopicCount > 0) {
+			this.createAnalysisChip(chipsEl, `Analysis only ${analysis.analysisOnlyTopicCount}`);
+		}
+
+		const metaLine = this.getAnalysisMetaLine(analysis);
+		if (metaLine.length > 0) {
+			summaryEl.createEl("p", {
+				cls: "obcd-sidebar-note",
+				text: metaLine,
+			});
+		}
+
+		if (analysis.budget !== null || analysis.remainingLlmCalls !== null) {
+			const budgetEl = summaryEl.createDiv({ cls: "obcd-sidebar-chips" });
+			if (analysis.budget !== null) {
+				this.createAnalysisChip(budgetEl, `Core budget ${analysis.budget.coreCardBudget}`);
+				this.createAnalysisChip(budgetEl, `Secondary budget ${analysis.budget.secondaryCardBudget}`);
+				this.createAnalysisChip(budgetEl, `Max/topic ${analysis.budget.maxCardsPerTopic}`);
+			}
+			if (analysis.remainingLlmCalls !== null) {
+				this.createAnalysisChip(budgetEl, `Calls left ${analysis.remainingLlmCalls}`);
+			}
+		}
+
+		if (analysis.topics.length === 0) {
+			sectionEl.createEl("p", {
+				cls: "obcd-sidebar-empty",
+				text: "This note has generation metadata, but no topic list was saved.",
+			});
+			return;
+		}
+
+		const detailsEl = sectionEl.createEl("details", { cls: "obcd-sidebar-analysis-topics" });
+		detailsEl.open = analysis.topics.length <= 4;
+		detailsEl.createEl("summary", {
+			text: this.getTopicListSummaryLabel(analysis),
+		});
+
+		const topicListEl = detailsEl.createDiv({ cls: "obcd-sidebar-analysis-list" });
+		for (const topic of analysis.topics) {
+			this.renderTopicAnalysisCard(topicListEl, topic);
+		}
+	}
+
+	private renderTopicAnalysisCard(containerEl: HTMLElement, topic: SidebarTopicAnalysisItem): void {
+		const cardEl = containerEl.createDiv({ cls: "obcd-sidebar-card obcd-sidebar-analysis-card" });
+		cardEl.addClass(`is-${topic.status}`);
+
+		const chipsEl = cardEl.createDiv({ cls: "obcd-sidebar-chips" });
+		this.createAnalysisChip(chipsEl, this.getTopicStatusLabel(topic), `obcd-sidebar-analysis-status is-${topic.status}`);
+		this.createAnalysisChip(chipsEl, topic.tier === "core" ? "Core" : "Secondary");
+		this.createAnalysisChip(chipsEl, `Chunks ${topic.memberChunkCount}`);
+		this.createAnalysisChip(chipsEl, `Score ${topic.importanceScore.toFixed(2)}`);
+		if (topic.plannedCardCount > 0) {
+			this.createAnalysisChip(chipsEl, `Planned ${topic.plannedCardCount}`);
+		} else if (topic.recommendedCardCount > 0) {
+			this.createAnalysisChip(chipsEl, `Suggested ${topic.recommendedCardCount}`);
+		}
+		if (topic.insertedCardCount > 0) {
+			this.createAnalysisChip(chipsEl, `Inserted ${topic.insertedCardCount}`);
+		}
+
+		const statementEl = cardEl.createEl("strong", {
+			cls: "obcd-sidebar-analysis-statement",
+			text: makePreview(topic.canonicalStatement, 140),
+		});
+		statementEl.setAttr("title", topic.canonicalStatement);
+
+		if (topic.summary.trim().length > 0 && topic.summary.trim() !== topic.canonicalStatement.trim()) {
+			const summaryEl = cardEl.createEl("p", {
+				cls: "obcd-sidebar-analysis-summary-text",
+				text: makePreview(topic.summary, 160),
+			});
+			summaryEl.setAttr("title", topic.summary);
+		}
+
+		const groupEl = cardEl.createEl("p", {
+			cls: "obcd-sidebar-subtle",
+			text: `Group: ${topic.knowledgeGroup}`,
+		});
+		groupEl.setAttr("title", topic.knowledgeGroup);
+
+		if (topic.status !== "planned" && topic.rejectionReason.trim().length > 0) {
+			const reasonEl = cardEl.createEl("p", {
+				cls: "obcd-sidebar-note",
+				text: topic.rejectionReason,
+			});
+			reasonEl.setAttr("title", topic.rejectionReason);
+		}
+	}
+
 	private renderSearchBar(containerEl: HTMLElement): void {
 		const filterEl = containerEl.createDiv({ cls: "obcd-sidebar-filter" });
 		const search = new SearchComponent(filterEl);
@@ -323,7 +442,7 @@ export class CardSidebarView extends ItemView {
 			return;
 		}
 
-		this.renderInsertedTable(sectionEl, filteredCards, state.isMutating);
+		this.renderInsertedCards(sectionEl, filteredCards, state.isMutating);
 	}
 
 	private renderScopeFilters(
@@ -405,19 +524,18 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
-	private renderInsertedTable(
+	private renderInsertedCards(
 		containerEl: HTMLElement,
 		cards: ExistingCardEntry[],
 		isMutating: boolean,
 	): void {
 		const visibleColumns = this.getVisibleInsertedColumns();
-		const tableWrapperEl = containerEl.createDiv({ cls: "obcd-sidebar-table-wrapper" });
-		const tableEl = tableWrapperEl.createEl("table", { cls: "obcd-sidebar-table" });
-		const tableHeadEl = tableEl.createEl("thead");
-		const headerRowEl = tableHeadEl.createEl("tr");
-
-		const selectAllCell = headerRowEl.createEl("th", { cls: "obcd-sidebar-table-select-cell" });
-		const selectAllCheckbox = selectAllCell.createEl("input", {
+		const listEl = containerEl.createDiv({ cls: "obcd-sidebar-inserted-list" });
+		const listHeaderEl = listEl.createDiv({ cls: "obcd-sidebar-card-list-header" });
+		const selectAllLabelEl = listHeaderEl.createEl("label", {
+			cls: "obcd-sidebar-card-list-select-all",
+		});
+		const selectAllCheckbox = selectAllLabelEl.createEl("input", {
 			attr: {
 				type: "checkbox",
 				"aria-label": "Select all visible cards",
@@ -438,43 +556,65 @@ export class CardSidebarView extends ItemView {
 					this.selectedInsertedCardIds.delete(cardId);
 				}
 			}
+			this.resetDeleteConfirmations();
 			this.render();
 		});
-
-		headerRowEl.createEl("th", {
-			text: "Question",
+		selectAllLabelEl.createSpan({
+			text: `Select all visible (${cards.length})`,
+		});
+		listHeaderEl.createEl("span", {
+			cls: "obcd-sidebar-subtle",
+			text: `${selectedVisibleCount} selected`,
 		});
 
-		for (const column of visibleColumns) {
-			headerRowEl.createEl("th", {
-				text: column.label,
-			});
-		}
-
-		headerRowEl.createEl("th", {
-			cls: "obcd-sidebar-table-action-cell",
-			text: "Actions",
-		});
-
-		const tableBodyEl = tableEl.createEl("tbody");
 		for (const card of cards) {
-			const rowEl = tableBodyEl.createEl("tr", { cls: "obcd-sidebar-table-row" });
-			rowEl.addClass("is-selectable");
-			rowEl.addClass(card.isPluginGenerated ? "is-plugin-generated" : "is-other-card");
-			rowEl.tabIndex = 0;
-			rowEl.setAttr("aria-selected", this.selectedInsertedCardIds.has(card.id) ? "true" : "false");
+			const cardEl = listEl.createDiv({ cls: "obcd-sidebar-card obcd-sidebar-inserted-card" });
+			cardEl.addClass("is-selectable");
+			cardEl.addClass(card.isPluginGenerated ? "is-plugin-generated" : "is-other-card");
+			cardEl.tabIndex = 0;
+			cardEl.setAttr("aria-selected", this.selectedInsertedCardIds.has(card.id) ? "true" : "false");
 			if (this.selectedInsertedCardIds.has(card.id)) {
-				rowEl.addClass("is-selected");
+				cardEl.addClass("is-selected");
 			}
-			this.bindInsertedRowInteraction(rowEl, card, isMutating);
+			this.bindInsertedCardInteraction(cardEl, card, isMutating);
 
-			const selectionCell = rowEl.createEl("td", { cls: "obcd-sidebar-table-select-cell" });
-			const checkboxEl = selectionCell.createEl("input", {
+			const headerEl = cardEl.createDiv({ cls: "obcd-sidebar-inserted-card-header" });
+			const metaEl = headerEl.createDiv({ cls: "obcd-sidebar-chips obcd-sidebar-inserted-card-meta" });
+			for (const column of visibleColumns) {
+				if (column.id === "target" || column.id === "tags") {
+					continue;
+				}
+
+				const rawValue = column.getValue(card).trim();
+				if (rawValue.length === 0) {
+					continue;
+				}
+
+				this.createAnalysisChip(
+					metaEl,
+					`${column.label}: ${makePreview(rawValue, column.previewLength)}`,
+					"obcd-sidebar-inserted-card-info",
+				);
+			}
+
+			const tags = card.tags.length > 0 ? card.tags : ["No tags"];
+			for (const tag of tags) {
+				this.createAnalysisChip(
+					metaEl,
+					tag,
+					`obcd-sidebar-inserted-card-tag ${tag === "No tags" ? "is-empty" : ""}`,
+				);
+			}
+
+			const controlsEl = headerEl.createDiv({ cls: "obcd-sidebar-inserted-card-controls" });
+			const checkboxEl = controlsEl.createEl("input", {
 				attr: {
 					type: "checkbox",
 					"aria-label": `Select ${card.front}`,
+					title: "Select card",
 				},
 			});
+			checkboxEl.addClass("obcd-sidebar-inserted-card-checkbox");
 			checkboxEl.checked = this.selectedInsertedCardIds.has(card.id);
 			checkboxEl.disabled = isMutating;
 			checkboxEl.addEventListener("change", () => {
@@ -486,26 +626,9 @@ export class CardSidebarView extends ItemView {
 				this.resetDeleteConfirmations();
 				this.render();
 			});
-
-			this.createInsertedTableCell(
-				rowEl,
-				makePreview(card.front, this.plugin.settings.sidebar.frontPreviewLength),
-				card.front,
-				"obcd-sidebar-table-question",
-			);
-
-			for (const column of visibleColumns) {
-				const rawValue = column.getValue(card);
-				this.createInsertedTableCell(
-					rowEl,
-					rawValue.length > 0 ? makePreview(rawValue, column.previewLength) : "—",
-					rawValue,
-				);
-			}
-
-			const actionCell = rowEl.createEl("td", { cls: "obcd-sidebar-table-action-cell" });
+			const actionEl = controlsEl.createDiv({ cls: "obcd-sidebar-inserted-card-actions" });
 			const isConfirmingDelete = this.pendingSingleDeleteCardId === card.id;
-			const deleteButtonEl = actionCell.createEl("button", {
+			const deleteButtonEl = actionEl.createEl("button", {
 				cls: "clickable-icon obcd-sidebar-inline-icon",
 				attr: {
 					type: "button",
@@ -528,11 +651,23 @@ export class CardSidebarView extends ItemView {
 				this.isBulkDeleteConfirmationPending = false;
 				this.render();
 			});
+
+			const questionEl = cardEl.createEl("strong", {
+				cls: "obcd-sidebar-inserted-card-question",
+				text: card.front,
+			});
+			questionEl.setAttr("title", card.front);
+
+			const answerEl = cardEl.createEl("p", {
+				cls: "obcd-sidebar-inserted-card-answer",
+				text: card.back,
+			});
+			answerEl.setAttr("title", card.back);
 		}
 	}
 
-	private bindInsertedRowInteraction(rowEl: HTMLTableRowElement, card: ExistingCardEntry, isMutating: boolean): void {
-		rowEl.addEventListener("click", (event) => {
+	private bindInsertedCardInteraction(cardEl: HTMLElement, card: ExistingCardEntry, isMutating: boolean): void {
+		cardEl.addEventListener("click", (event) => {
 			if (isMutating || this.isInteractiveEventTarget(event.target)) {
 				return;
 			}
@@ -540,7 +675,7 @@ export class CardSidebarView extends ItemView {
 			void this.plugin.sidebar.revealCard(card);
 		});
 
-		rowEl.addEventListener("keydown", (event) => {
+		cardEl.addEventListener("keydown", (event) => {
 			if (isMutating || this.isInteractiveEventTarget(event.target)) {
 				return;
 			}
@@ -551,24 +686,6 @@ export class CardSidebarView extends ItemView {
 
 			event.preventDefault();
 			void this.plugin.sidebar.revealCard(card);
-		});
-	}
-
-	private createInsertedTableCell(
-		rowEl: HTMLElement,
-		text: string,
-		title: string,
-		extraClass = "",
-	): void {
-		const cellEl = rowEl.createEl("td");
-		if (extraClass.length > 0) {
-			cellEl.addClass(extraClass);
-		}
-
-		cellEl.setAttr("title", title);
-		cellEl.createEl("span", {
-			cls: "obcd-sidebar-table-text",
-			text,
 		});
 	}
 
@@ -713,6 +830,16 @@ export class CardSidebarView extends ItemView {
 		}
 	}
 
+	private createAnalysisChip(containerEl: HTMLElement, text: string, extraClass = ""): void {
+		const chipEl = containerEl.createEl("span", {
+			cls: "obcd-sidebar-chip",
+			text,
+		});
+		if (extraClass.length > 0) {
+			chipEl.addClass(...extraClass.split(" ").filter((value) => value.length > 0));
+		}
+	}
+
 	private getTagFiltersSummaryLabel(totalCount: number, tagFilters: CardTagFilterOption[]): string {
 		if (this.activeTagFilter === null) {
 			return `Tag filters: All cards (${totalCount})`;
@@ -757,6 +884,75 @@ export class CardSidebarView extends ItemView {
 			default:
 				return "Chunk";
 		}
+	}
+
+	private getAnalysisMetaLine(analysis: SidebarAnalysisSnapshot): string {
+		const parts: string[] = [];
+		const formattedTimestamp = this.formatTimestamp(analysis.generatedAt);
+		if (formattedTimestamp.length > 0) {
+			parts.push(`Generated ${formattedTimestamp}`);
+		}
+		if (analysis.mode !== null) {
+			parts.push(this.getGenerationModeLabel(analysis.mode));
+		}
+		if (analysis.model.trim().length > 0) {
+			parts.push(analysis.model.trim());
+		}
+		if (analysis.promptSource.trim().length > 0) {
+			parts.push(`Prompt ${analysis.promptSource.trim()}`);
+		}
+
+		return parts.join(" • ");
+	}
+
+	private getTopicListSummaryLabel(analysis: SidebarAnalysisSnapshot): string {
+		if (analysis.plannedTopicCount === 0) {
+			return `Topics (${analysis.topicCount})`;
+		}
+
+		return `Topics (${analysis.topicCount}) • Planned ${analysis.plannedTopicCount}`;
+	}
+
+	private getTopicStatusLabel(topic: SidebarTopicAnalysisItem): string {
+		switch (topic.status) {
+			case "planned":
+				return "Selected for cards";
+			case "eligible":
+				return "Eligible";
+			case "analysis-only":
+			default:
+				return "Analysis only";
+		}
+	}
+
+	private getGenerationModeLabel(mode: NonNullable<SidebarAnalysisSnapshot["mode"]>): string {
+		switch (mode) {
+			case "cursor-file":
+				return "Up to cursor";
+			case "folder-file":
+				return "Folder run";
+			case "selection":
+				return "Selection";
+			case "file":
+			default:
+				return "Current file";
+		}
+	}
+
+	private formatTimestamp(value: string): string {
+		if (value.trim().length === 0) {
+			return "";
+		}
+
+		const date = new Date(value);
+		if (Number.isNaN(date.getTime())) {
+			return value;
+		}
+
+		return new Intl.DateTimeFormat(undefined, {
+			dateStyle: "medium",
+			timeStyle: "short",
+		}).format(date);
 	}
 
 	private renderEmptyState(containerEl: HTMLElement, message: string): void {

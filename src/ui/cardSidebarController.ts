@@ -2,7 +2,9 @@ import { MarkdownView, Notice, TAbstractFile, TFile, WorkspaceLeaf } from "obsid
 
 import type ObcdPlugin from "../main";
 import type { ExistingCardEntry, GenerationProgressState } from "../types";
+import { buildSidebarAnalysisSnapshot, type SidebarAnalysisSnapshot } from "./sidebarAnalysis";
 import { collectExistingCardEntries } from "../utils/cardBlockParser";
+import { readDocumentMetadata } from "../writing/documentMetadataWriter";
 import { deleteExistingCards, restoreDeletedCards } from "../writing/flashcardWriter";
 
 export const OBCD_SIDEBAR_VIEW_TYPE = "obcd-sidebar";
@@ -10,6 +12,7 @@ export const OBCD_SIDEBAR_VIEW_TYPE = "obcd-sidebar";
 export interface CardSidebarSnapshot {
 	activeFile: TFile | null;
 	existingCards: ExistingCardEntry[];
+	analysis: SidebarAnalysisSnapshot | null;
 	generationProgress: GenerationProgressState | null;
 	isRefreshingFile: boolean;
 	isMutating: boolean;
@@ -33,6 +36,7 @@ export class CardSidebarController {
 	private readonly listeners = new Set<() => void>();
 	private activeFile: TFile | null;
 	private existingCards: ExistingCardEntry[] = [];
+	private analysis: SidebarAnalysisSnapshot | null = null;
 	private refreshToken = 0;
 	private isRefreshingFile = false;
 	private isMutating = false;
@@ -81,6 +85,13 @@ export class CardSidebarController {
 		return {
 			activeFile: this.activeFile,
 			existingCards: [...this.existingCards],
+			analysis: this.analysis === null
+				? null
+				: {
+					...this.analysis,
+					budget: this.analysis.budget === null ? null : { ...this.analysis.budget },
+					topics: this.analysis.topics.map((topic) => ({ ...topic })),
+				},
 			generationProgress: this.generationProgress === null ? null : { ...this.generationProgress },
 			isRefreshingFile: this.isRefreshingFile,
 			isMutating: this.isMutating,
@@ -273,6 +284,7 @@ export class CardSidebarController {
 
 		if (!isMarkdownFile(file)) {
 			this.existingCards = [];
+			this.analysis = null;
 			this.isRefreshingFile = false;
 			this.notify();
 			return;
@@ -331,6 +343,10 @@ export class CardSidebarController {
 		}
 
 		this.existingCards = collectExistingCardEntries(file, content);
+		this.analysis = buildSidebarAnalysisSnapshot(
+			readDocumentMetadata(this.plugin.app, file),
+			this.existingCards,
+		);
 		this.isRefreshingFile = false;
 		this.notify();
 	}
@@ -383,6 +399,7 @@ export class CardSidebarController {
 		this.isRefreshingFile = nextFile !== null;
 		if (activeFileChanged) {
 			this.existingCards = [];
+			this.analysis = null;
 		}
 		this.notify();
 		await this.refreshDisplayedFileCards(nextFile, reason);
@@ -410,6 +427,7 @@ export class CardSidebarController {
 		if (this.activeFile?.path === file.path) {
 			this.activeFile = null;
 			this.existingCards = [];
+			this.analysis = null;
 		}
 
 		if (this.undoDeleteOperation?.filePath === file.path) {

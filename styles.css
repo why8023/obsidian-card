@@ -126,6 +126,26 @@
 	gap: 12px;
 }
 
+.obcd-sidebar-card-list-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 2px 2px 0;
+}
+
+.obcd-sidebar-card-list-select-all {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	color: var(--text-muted);
+}
+
+.obcd-sidebar-card-list-select-all input {
+	margin: 0;
+}
+
 .obcd-sidebar-card {
 	padding: 12px;
 	border-radius: 12px;
@@ -185,7 +205,8 @@
 }
 
 .obcd-sidebar-column-settings,
-.obcd-sidebar-tag-filters {
+.obcd-sidebar-tag-filters,
+.obcd-sidebar-analysis-topics {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 10px;
 	background: var(--background-primary-alt);
@@ -193,15 +214,158 @@
 }
 
 .obcd-sidebar-column-settings summary,
-.obcd-sidebar-tag-filters summary {
+.obcd-sidebar-tag-filters summary,
+.obcd-sidebar-analysis-topics summary {
 	cursor: var(--cursor);
 	font-size: 12px;
 	font-weight: 600;
 	color: var(--text-muted);
 }
 
-.obcd-sidebar-tag-filters .obcd-sidebar-scope {
+.obcd-sidebar-tag-filters .obcd-sidebar-scope,
+.obcd-sidebar-analysis-list {
 	margin-top: 10px;
+}
+
+.obcd-sidebar-analysis-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.obcd-sidebar-analysis-summary {
+	background: linear-gradient(180deg, var(--background-secondary), var(--background-primary));
+}
+
+.obcd-sidebar-analysis-card {
+	gap: 8px;
+}
+
+.obcd-sidebar-analysis-card.is-planned {
+	border-color: color-mix(in srgb, var(--interactive-accent) 32%, var(--background-modifier-border));
+	background: color-mix(in srgb, var(--interactive-accent) 6%, var(--background-secondary));
+}
+
+.obcd-sidebar-analysis-card.is-eligible {
+	border-color: color-mix(in srgb, var(--text-accent) 24%, var(--background-modifier-border));
+}
+
+.obcd-sidebar-analysis-card.is-analysis-only {
+	background: color-mix(in srgb, var(--background-modifier-hover) 35%, var(--background-secondary));
+}
+
+.obcd-sidebar-analysis-statement {
+	display: block;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-analysis-summary-text {
+	margin: 0;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+
+.obcd-sidebar-analysis-status.is-planned {
+	background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-modifier-hover));
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-analysis-status.is-eligible {
+	background: color-mix(in srgb, var(--text-accent) 16%, var(--background-modifier-hover));
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-analysis-status.is-analysis-only {
+	background: color-mix(in srgb, var(--background-modifier-border) 45%, var(--background-modifier-hover));
+	color: var(--text-muted);
+}
+
+.obcd-sidebar-inserted-card {
+	gap: 8px;
+	padding: 10px 12px;
+}
+
+.obcd-sidebar-inserted-card.is-plugin-generated {
+	background: color-mix(in srgb, var(--interactive-accent) 5%, var(--background-secondary));
+}
+
+.obcd-sidebar-inserted-card.is-selected {
+	background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-secondary));
+	border-color: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
+}
+
+.obcd-sidebar-inserted-card.is-selectable {
+	cursor: pointer;
+}
+
+.obcd-sidebar-inserted-card.is-selectable:hover {
+	background: color-mix(in srgb, var(--interactive-accent) 7%, var(--background-secondary));
+}
+
+.obcd-sidebar-inserted-card.is-selectable:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: -2px;
+}
+
+.obcd-sidebar-inserted-card-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.obcd-sidebar-inserted-card-meta {
+	flex: 1 1 auto;
+	align-items: center;
+	min-width: 0;
+}
+
+.obcd-sidebar-inserted-card-info {
+	background: color-mix(in srgb, var(--background-modifier-border) 52%, var(--background-primary-alt));
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-inserted-card-tag {
+	background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-modifier-border));
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-inserted-card-tag.is-empty {
+	color: var(--text-faint);
+}
+
+.obcd-sidebar-inserted-card-controls {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex: 0 0 auto;
+}
+
+.obcd-sidebar-inserted-card-checkbox {
+	margin: 0;
+}
+
+.obcd-sidebar-inserted-card-actions {
+	display: inline-flex;
+}
+
+.obcd-sidebar-inserted-card-question {
+	display: block;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-normal);
+}
+
+.obcd-sidebar-inserted-card-answer {
+	margin: 0;
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-muted);
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .obcd-sidebar-column-options {
@@ -245,6 +409,12 @@
 	font-weight: 600;
 	color: var(--text-muted);
 	background: var(--background-primary-alt);
+}
+
+.obcd-sidebar-table td {
+	font-size: 13px;
+	line-height: 1.5;
+	color: var(--text-normal);
 }
 
 .obcd-sidebar-table tbody tr:last-child td {
@@ -301,6 +471,9 @@
 
 .obcd-sidebar-table-text {
 	display: block;
+	font-size: inherit;
+	line-height: inherit;
+	color: inherit;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -320,4 +493,3 @@
 	border-color: var(--text-error);
 	color: var(--text-error);
 }
-

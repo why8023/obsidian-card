@@ -34,6 +34,16 @@ export interface PersistedDocumentGenerationMeta {
 	version: number;
 	generatedAt: string;
 	mode: GenerationMode;
+	provider: {
+		presetType: string;
+		model: string;
+		temperature: number | null;
+	};
+	prompt: {
+		source: string;
+		noteFolder: string;
+		templatePath: string;
+	};
 	fingerprints: {
 		extract: string;
 		group: string;
@@ -251,6 +261,16 @@ function parsePersistedGenerationMeta(value: unknown): PersistedDocumentGenerati
 		version?: unknown;
 		generatedAt?: unknown;
 		mode?: unknown;
+		provider?: {
+			presetType?: unknown;
+			model?: unknown;
+			temperature?: unknown;
+		};
+		prompt?: {
+			source?: unknown;
+			noteFolder?: unknown;
+			templatePath?: unknown;
+		};
 		fingerprints?: {
 			extract?: unknown;
 			group?: unknown;
@@ -276,6 +296,18 @@ function parsePersistedGenerationMeta(value: unknown): PersistedDocumentGenerati
 		version: typeof parsed.version === "number" ? parsed.version : DOCUMENT_METADATA_SCHEMA_VERSION,
 		generatedAt: readString(parsed.generatedAt),
 		mode: parseGenerationMode(parsed.mode),
+		provider: {
+			presetType: isObject(parsed.provider) ? readString(parsed.provider.presetType) : "",
+			model: isObject(parsed.provider) ? readString(parsed.provider.model) : "",
+			temperature: isObject(parsed.provider) && typeof parsed.provider.temperature === "number" && Number.isFinite(parsed.provider.temperature)
+				? parsed.provider.temperature
+				: null,
+		},
+		prompt: {
+			source: isObject(parsed.prompt) ? readString(parsed.prompt.source) : "",
+			noteFolder: isObject(parsed.prompt) ? readString(parsed.prompt.noteFolder) : "",
+			templatePath: isObject(parsed.prompt) ? readString(parsed.prompt.templatePath) : "",
+		},
 		fingerprints: {
 			extract,
 			group,
