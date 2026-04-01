@@ -152,8 +152,6 @@ function collectAtomicBlocks(
 		if (fenceMarker === null && currentHeading && currentHeading.from === line.start) {
 			headingCursor.stack = applyHeading(headingCursor.stack, currentHeading.level, currentHeading.title);
 			headingCursor.index += 1;
-			lineIndex += 1;
-			continue;
 		}
 
 		const fenceMatch = line.text.match(/^ {0,3}(`{3,}|~{3,})/);
@@ -208,7 +206,7 @@ function mergeBlocksByTargetSize(blocks: CandidateBlock[], targetChunkCharacters
 
 	for (const nextBlock of blocks.slice(1)) {
 		const mergedLength = current.text.length + 2 + nextBlock.text.length;
-		const shouldSoftSplit = hasHeadingContextBoundary(current, nextBlock) && current.text.length >= softChunkCharacters;
+		const shouldSoftSplit = current.text.length >= softChunkCharacters && mergedLength > targetChunkCharacters;
 		const shouldHardSplit = mergedLength > maxChunkCharacters && current.text.length >= minChunkCharacters;
 
 		if (shouldSoftSplit || shouldHardSplit) {
@@ -311,16 +309,6 @@ function applyHeading(
 		title,
 	});
 	return nextStack;
-}
-
-function hasHeadingContextBoundary(current: CandidateBlock, next: CandidateBlock): boolean {
-	const currentRoot = current.headingPath[0] ?? "";
-	const nextRoot = next.headingPath[0] ?? "";
-	if (currentRoot.length === 0 || nextRoot.length === 0) {
-		return false;
-	}
-
-	return currentRoot !== nextRoot;
 }
 
 function cloneBlock(block: CandidateBlock): CandidateBlock {
