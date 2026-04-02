@@ -253,7 +253,7 @@ export class CardSidebarView extends ItemView {
 
 	private renderTopicSection(containerEl: HTMLElement, analysis: SidebarAnalysisSnapshot | null): void {
 		const sectionEl = this.createCollapsibleSection(containerEl, {
-			title: "Topic",
+			title: "Topics",
 			detail: this.getTopicSectionSummary(analysis),
 			isOpen: this.isTopicSectionExpanded,
 			onToggle: (isOpen) => {
