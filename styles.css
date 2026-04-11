@@ -544,3 +544,222 @@
 	border-color: var(--text-error);
 	color: var(--text-error);
 }
+
+.obcd-settings-root {
+	padding-bottom: var(--size-4-6);
+}
+
+.obcd-settings-root .obcd-settings-page {
+	display: flex;
+	flex-direction: column;
+	gap: var(--size-4-4);
+}
+
+.obcd-settings-root .obcd-settings-hero {
+	padding: var(--size-4-6);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l);
+	background:
+		radial-gradient(circle at top right, color-mix(in srgb, var(--interactive-accent) 14%, transparent), transparent 36%),
+		linear-gradient(
+			180deg,
+			color-mix(in srgb, var(--background-secondary) 92%, white 6%),
+			color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary) 6%)
+		);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, var(--background-modifier-border) 45%, transparent),
+		0 10px 24px color-mix(in srgb, var(--background-modifier-box-shadow) 12%, transparent);
+}
+
+.obcd-settings-root .obcd-settings-page-heading.setting-item {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+}
+
+.obcd-settings-root .obcd-settings-page-heading.setting-item .setting-item-info {
+	padding: 0;
+}
+
+.obcd-settings-root .obcd-settings-page-title {
+	margin: 0;
+	font-size: var(--h2-size);
+	line-height: var(--line-height-tight);
+}
+
+.obcd-settings-root .obcd-settings-page-description,
+.obcd-settings-root .obcd-settings-tab-description {
+	margin: 0;
+	max-width: 72ch;
+	color: var(--text-muted);
+}
+
+.obcd-settings-root .obcd-settings-page-description {
+	margin-top: var(--size-4-2);
+}
+
+.obcd-settings-root .obcd-settings-tabs-nav {
+	display: flex;
+	gap: var(--size-2-2);
+	align-items: stretch;
+	padding: var(--size-2-2);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l);
+	background: var(--background-secondary);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background-modifier-border) 36%, transparent);
+	width: max-content;
+	max-width: 100%;
+	overflow-x: auto;
+	scrollbar-width: thin;
+}
+
+.obcd-settings-root .obcd-settings-tab-button {
+	flex: 0 0 auto;
+	padding: 6px 12px;
+	border: 1px solid transparent;
+	border-radius: var(--radius-s);
+	background: transparent;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-medium);
+	cursor: pointer;
+	transition:
+		color 160ms ease,
+		border-color 160ms ease,
+		background-color 160ms ease,
+		box-shadow 160ms ease;
+}
+
+.obcd-settings-root .obcd-settings-tab-button:hover {
+	color: var(--text-normal);
+	background: color-mix(in srgb, var(--background-primary) 72%, transparent);
+}
+
+.obcd-settings-root .obcd-settings-tab-button.is-active {
+	color: var(--text-normal);
+	border-color: color-mix(in srgb, var(--interactive-accent) 50%, var(--background-modifier-border));
+	background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+	box-shadow: 0 6px 18px color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+}
+
+.obcd-settings-root .obcd-settings-tab-content {
+	display: grid;
+	gap: var(--size-4-4);
+}
+
+.obcd-settings-root .obcd-settings-panel {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-l);
+	background: color-mix(in srgb, var(--background-secondary) 88%, white 8%);
+	box-shadow: inset 0 1px 0 color-mix(in srgb, var(--background-modifier-border) 42%, transparent);
+}
+
+.obcd-settings-root .obcd-settings-panel-body {
+	padding: var(--size-4-4);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item {
+	margin-top: var(--size-4-2);
+	padding: var(--size-4-3);
+	border: 1px solid color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
+	border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 48%, transparent);
+	border-radius: var(--radius-m);
+	background: color-mix(in srgb, var(--background-primary) 76%, var(--background-secondary) 24%);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item:first-child {
+	margin-top: 0;
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-heading {
+	margin-top: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-heading + .setting-item,
+.obcd-settings-root .obcd-settings-panel .setting-item-heading + .obcd-settings-hint {
+	margin-top: var(--size-4-3);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-heading:not(:first-child) {
+	margin-top: var(--size-4-5);
+	padding-top: var(--size-4-4);
+	border-top: 1px dashed color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-heading:first-child .setting-item-name {
+	font-size: var(--h4-size);
+	line-height: var(--line-height-tight);
+	font-weight: var(--h4-weight);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-heading:not(:first-child) .setting-item-name {
+	font-size: var(--font-ui-medium);
+	font-weight: var(--font-semibold);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-name {
+	line-height: var(--line-height-tight);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-description {
+	margin-top: var(--size-2-1);
+	max-width: 72ch;
+	color: var(--text-muted);
+}
+
+.obcd-settings-root .obcd-settings-panel .obcd-settings-hint {
+	margin: var(--size-4-2) 0 0;
+	padding: var(--size-4-3);
+	border: 1px dashed color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
+	border-radius: var(--radius-m);
+	background: color-mix(in srgb, var(--background-primary) 68%, var(--background-secondary) 32%);
+	color: var(--text-muted);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-control {
+	align-self: center;
+	gap: var(--size-2-2);
+	flex-wrap: wrap;
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-control input[type="text"],
+.obcd-settings-root .obcd-settings-panel .setting-item-control input[type="number"],
+.obcd-settings-root .obcd-settings-panel .setting-item-control select {
+	min-width: 220px;
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-control textarea {
+	min-width: min(100%, 560px);
+	width: min(100%, 680px);
+}
+
+.obcd-settings-root .obcd-settings-panel .setting-item-control button {
+	white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+	.obcd-settings-root .obcd-settings-hero {
+		padding: var(--size-4-4);
+	}
+
+	.obcd-settings-root .obcd-settings-tabs-nav {
+		width: 100%;
+	}
+
+	.obcd-settings-root .obcd-settings-panel-body {
+		padding: var(--size-4-3);
+	}
+
+	.obcd-settings-root .obcd-settings-panel .setting-item-control input[type="text"],
+	.obcd-settings-root .obcd-settings-panel .setting-item-control input[type="number"],
+	.obcd-settings-root .obcd-settings-panel .setting-item-control select,
+	.obcd-settings-root .obcd-settings-panel .setting-item-control textarea {
+		min-width: 0;
+		width: 100%;
+	}
+}

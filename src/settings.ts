@@ -198,8 +198,23 @@ export function parseSettings(data: unknown): ObcdSettings {
 	};
 }
 
+type SettingsPageTabId = "provider" | "generation" | "prompts" | "advanced";
+
+interface SettingsPageTabDefinition {
+	description: string;
+	id: SettingsPageTabId;
+	label: string;
+}
+
+interface SettingsPageSection {
+	elements: HTMLElement[];
+	heading: string;
+	tabId: SettingsPageTabId;
+}
+
 export class ObcdSettingTab extends PluginSettingTab {
 	plugin: ObcdPlugin;
+	private activeTab: SettingsPageTabId = "provider";
 	private isTestingConnection = false;
 
 	constructor(app: App, plugin: ObcdPlugin) {
@@ -208,8 +223,9 @@ export class ObcdSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
+		const rootEl = this.containerEl;
+		rootEl.empty();
+		const containerEl = rootEl.createDiv();
 
 		const activeProvider = getActiveProvider(this.plugin.settings);
 		const presetInfo = PROVIDER_PRESET_INFO[activeProvider.presetType];
@@ -804,6 +820,172 @@ export class ObcdSettingTab extends PluginSettingTab {
 					this.plugin.settings.debug.enabled = value;
 					await this.plugin.saveSettings();
 				}));
+
+		this.renderSettingsPageChrome(rootEl, containerEl);
+	}
+
+	private getSettingsPageTabs(): readonly SettingsPageTabDefinition[] {
+		return [
+			{
+				description: "配置模型服务、基础地址、密钥和连通性测试。",
+				id: "provider",
+				label: "服务接入",
+			},
+			{
+				description: "控制预算、分块、调用上限、默认标签与重建策略。",
+				id: "generation",
+				label: "生成策略",
+			},
+			{
+				description: "调整各阶段系统提示词、共享附加提示词和文件夹模板规则。",
+				id: "prompts",
+				label: "提示词",
+			},
+			{
+				description: "查看兼容模式与调试开关等高级行为配置。",
+				id: "advanced",
+				label: "高级选项",
+			},
+		];
+	}
+
+	private renderSettingsPageChrome(rootEl: HTMLElement, sourceEl: HTMLElement): void {
+		const sections = this.collectSettingsSections(sourceEl);
+		const availableTabIds = new Set(sections.map((section) => section.tabId));
+		const tabs = this.getSettingsPageTabs().filter((tab) => availableTabIds.has(tab.id));
+
+		rootEl.empty();
+		rootEl.addClass("obcd-settings-root");
+
+		if (tabs.length === 0) {
+			for (const section of sections) {
+				for (const element of section.elements) {
+					rootEl.appendChild(element);
+				}
+			}
+			return;
+		}
+
+		const activeTab = tabs.find((tab) => tab.id === this.activeTab) ?? tabs[0]!;
+		this.activeTab = activeTab.id;
+
+		const pageEl = rootEl.createDiv({ cls: "obcd-settings-page" });
+		const heroEl = pageEl.createDiv({ cls: "obcd-settings-hero" });
+		const titleSetting = new Setting(heroEl)
+			.setName(this.plugin.manifest.name)
+			.setHeading();
+		titleSetting.settingEl.addClass("obcd-settings-page-heading");
+		titleSetting.nameEl.addClass("obcd-settings-page-title");
+		heroEl.createEl("p", {
+			cls: "obcd-settings-page-description",
+			text: "配置卡片生成服务、生成策略、提示词模板，以及兼容和调试行为。",
+		});
+
+		const tabsEl = pageEl.createDiv({ cls: "obcd-settings-tabs-nav" });
+		tabsEl.setAttr("role", "tablist");
+
+		for (const tab of tabs) {
+			const buttonEl = tabsEl.createEl("button", {
+				cls: "obcd-settings-tab-button",
+				text: tab.label,
+			});
+			buttonEl.type = "button";
+			buttonEl.setAttr("role", "tab");
+			buttonEl.setAttr("aria-selected", String(tab.id === activeTab.id));
+
+			if (tab.id === activeTab.id) {
+				buttonEl.addClass("is-active");
+			}
+
+			buttonEl.addEventListener("click", () => {
+				if (this.activeTab === tab.id) {
+					return;
+				}
+
+				this.activeTab = tab.id;
+				this.display();
+			});
+		}
+
+		pageEl.createEl("p", {
+			cls: "obcd-settings-tab-description",
+			text: activeTab.description,
+		});
+
+		const tabContentEl = pageEl.createDiv({ cls: "obcd-settings-tab-content" });
+		tabContentEl.setAttr("role", "tabpanel");
+
+		for (const section of sections.filter((item) => item.tabId === activeTab.id)) {
+			const panelEl = tabContentEl.createDiv({ cls: "obcd-settings-panel" });
+			const panelBodyEl = panelEl.createDiv({ cls: "obcd-settings-panel-body" });
+
+			for (const element of section.elements) {
+				panelBodyEl.appendChild(element);
+			}
+		}
+	}
+
+	private collectSettingsSections(sourceEl: HTMLElement): SettingsPageSection[] {
+		const sections: SettingsPageSection[] = [];
+		let currentHeading = "";
+		let currentElements: HTMLElement[] = [];
+
+		const commitSection = () => {
+			if (currentElements.length === 0) {
+				return;
+			}
+
+			const section: SettingsPageSection = {
+				elements: [...currentElements],
+				heading: currentHeading,
+				tabId: this.mapSettingsHeadingToTab(currentHeading),
+			};
+
+			if (this.shouldKeepSettingsSection(section)) {
+				sections.push(section);
+			}
+		};
+
+		for (const child of Array.from(sourceEl.children)) {
+			if (!(child instanceof HTMLElement)) {
+				continue;
+			}
+
+			if (child.classList.contains("setting-item-heading")) {
+				commitSection();
+				currentHeading = child.querySelector<HTMLElement>(".setting-item-name")?.textContent?.trim() ?? "";
+				currentElements = [child];
+				continue;
+			}
+
+			currentElements.push(child);
+		}
+
+		commitSection();
+
+		return sections;
+	}
+
+	private mapSettingsHeadingToTab(heading: string): SettingsPageTabId {
+		switch (heading) {
+			case "模型服务":
+				return "provider";
+			case "生成参数":
+				return "generation";
+			case "提示词":
+				return "prompts";
+			case "兼容性":
+			case "调试":
+			case "侧边栏":
+			default:
+				return "advanced";
+		}
+	}
+
+	private shouldKeepSettingsSection(section: SettingsPageSection): boolean {
+		return section.elements.some((element, index) => (
+			index > 0 || !element.classList.contains("setting-item-heading")
+		));
 	}
 
 	private async commitSettingsUpdate(update: () => void, options: { redisplay?: boolean } = {}): Promise<void> {
