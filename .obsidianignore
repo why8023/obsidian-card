@@ -1,0 +1,3 @@
+# Extends the whyspace vault root document and attachment allowlist when opened from that vault.
+# Existing project dependencies and tool caches.
+/node_modules/
