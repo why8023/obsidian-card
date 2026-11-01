@@ -1,3 +1,10 @@
-# Extends the whyspace vault root document and attachment allowlist when opened from that vault.
-# Existing project dependencies and tool caches.
+# Project-local scan exclusions: obsidian-card.
+# Repository metadata and operating-system noise.
+.git/
+.codex-artifact-work/
+.DS_Store
+Thumbs.db
+
+# Project dependencies and generated caches.
 /node_modules/
+/.npm/
